@@ -1,3 +1,5 @@
+using ArkaneSystems.Raven.Core.AgentRuntime;
+using ArkaneSystems.Raven.Core.AgentRuntime.Foundry;
 using ArkaneSystems.Raven.Core.Api.Endpoints;
 using ArkaneSystems.Raven.Core.Application.Sessions;
 using Serilog;
@@ -17,6 +19,10 @@ try
         .ReadFrom.Services(services)
         .Enrich.FromLogContext());
 
+    builder.Services.Configure<FoundryOptions>(
+        builder.Configuration.GetSection(FoundryOptions.SectionName));
+
+    builder.Services.AddSingleton<IAgentConversationService, FoundryAgentConversationService>();
     builder.Services.AddSingleton<ISessionStore, InMemorySessionStore>();
 
     var app = builder.Build();

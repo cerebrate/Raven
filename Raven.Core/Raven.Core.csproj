@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <RootNamespace>ArkaneSystems.$(MSBuildProjectName.Replace(" ", "_"))</RootNamespace>
+    <UserSecretsId>3812e97e-c1b3-4f69-b20d-f44bbb184341</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
