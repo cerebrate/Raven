@@ -1,3 +1,5 @@
+using ArkaneSystems.Raven.Core.Api.Endpoints;
+using ArkaneSystems.Raven.Core.Application.Sessions;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -15,9 +17,12 @@ try
         .ReadFrom.Services(services)
         .Enrich.FromLogContext());
 
+    builder.Services.AddSingleton<ISessionStore, InMemorySessionStore>();
+
     var app = builder.Build();
 
     app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+    app.MapChatEndpoints();
 
     app.Run();
 }
