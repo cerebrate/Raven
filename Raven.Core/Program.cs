@@ -1,32 +1,31 @@
-var builder = WebApplication.CreateBuilder(args);
+using Serilog;
 
-// Add services to the container.
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
-var app = builder.Build();
-
-// Configure the HTTP request pipeline.
-
-var summaries = new[]
+try
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+    Log.Information("Starting Raven.Core");
 
-app.MapGet ("/weatherforecast", () =>
+    var builder = WebApplication.CreateBuilder(args);
+
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext());
+
+    var app = builder.Build();
+
+    app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+    app.Run();
+}
+catch (Exception ex)
 {
-  var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-  return forecast;
-});
-
-app.Run ();
-
-internal record WeatherForecast (DateOnly Date, int TemperatureC, string? Summary)
+    Log.Fatal(ex, "Raven.Core terminated unexpectedly");
+}
+finally
 {
-  public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+    Log.CloseAndFlush();
 }
