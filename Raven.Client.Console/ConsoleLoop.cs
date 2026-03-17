@@ -1,22 +1,22 @@
-using static global::System.Console;
 using ArkaneSystems.Raven.Client.Console.Models;
+using ArkaneSystems.Raven.Client.Console.Rendering;
 using ArkaneSystems.Raven.Client.Console.Services;
 
 namespace ArkaneSystems.Raven.Client.Console;
 
-public class ConsoleLoop(RavenApiClient client, SessionState state)
+public class ConsoleLoop(RavenApiClient client, SessionState state, IConsoleRenderer renderer)
 {
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        WriteLine("Connecting to Raven...");
+        renderer.ShowBanner();
+
         state.SessionId = await client.CreateSessionAsync();
-        WriteLine($"Session started. Type /exit to quit.");
-        WriteLine();
+        renderer.ShowSessionStarted(state.SessionId);
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            Write("> ");
-            var input = ReadLine();
+            renderer.WriteUserPrompt();
+            var input = System.Console.ReadLine();
 
             if (input is null || input.Equals("/exit", StringComparison.OrdinalIgnoreCase))
                 break;
@@ -24,11 +24,25 @@ public class ConsoleLoop(RavenApiClient client, SessionState state)
             if (string.IsNullOrWhiteSpace(input))
                 continue;
 
-            var response = await client.SendMessageAsync(state.SessionId, input);
-            WriteLine($"Raven: {response}");
-            WriteLine();
+            if (input.Equals("/help", StringComparison.OrdinalIgnoreCase))
+            {
+                renderer.ShowHelp();
+                continue;
+            }
+
+            try
+            {
+                renderer.BeginResponse();
+                await foreach (var chunk in client.StreamMessageAsync(state.SessionId, input, cancellationToken))
+                    renderer.WriteChunk(chunk);
+                renderer.EndResponse();
+            }
+            catch (Exception ex)
+            {
+                renderer.ShowError(ex.Message);
+            }
         }
 
-        WriteLine("Goodbye.");
+        renderer.ShowGoodbye();
     }
 }

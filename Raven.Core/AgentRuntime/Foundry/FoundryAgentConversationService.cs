@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -37,5 +38,20 @@ public class FoundryAgentConversationService : IAgentConversationService
             throw new InvalidOperationException($"Conversation '{conversationId}' not found.");
 
         return (await _agent.RunAsync(content, session)).Text;
+    }
+
+    public async IAsyncEnumerable<string> StreamMessageAsync(
+        string conversationId,
+        string content,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (!_sessions.TryGetValue(conversationId, out var session))
+            throw new InvalidOperationException($"Conversation '{conversationId}' not found.");
+
+        await foreach (var update in _agent.RunStreamingAsync(content, session).WithCancellation(cancellationToken))
+        {
+            if (!string.IsNullOrEmpty(update.Text))
+                yield return update.Text;
+        }
     }
 }
