@@ -1,1 +1,8 @@
-<Solution />
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="docs/Raven.Architecture.Plan.md" />
+  </Folder>
+  <Project Path="Raven.Client.Console/Raven.Client.Console.csproj" />
+  <Project Path="Raven.Contracts/Raven.Contracts.csproj" />
+  <Project Path="Raven.Core/Raven.Core.csproj" />
+</Solution>
