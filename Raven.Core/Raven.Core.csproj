@@ -26,4 +26,9 @@
     <ProjectReference Include="..\Raven.Contracts\Raven.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Api\Endpoints\" />
+    <Folder Include="AgentRuntime\" />
+  </ItemGroup>
+
 </Project>
