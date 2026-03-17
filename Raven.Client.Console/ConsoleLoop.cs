@@ -30,6 +30,32 @@ public class ConsoleLoop(RavenApiClient client, SessionState state, IConsoleRend
                 continue;
             }
 
+            if (input.Equals("/new", StringComparison.OrdinalIgnoreCase))
+            {
+                var oldSessionId = state.SessionId;
+                try { await client.DeleteSessionAsync(oldSessionId); } catch { /* best-effort */ }
+                state.SessionId = await client.CreateSessionAsync();
+                renderer.ShowNewSession(oldSessionId, state.SessionId);
+                continue;
+            }
+
+            if (input.Equals("/history", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var info = await client.GetSessionAsync(state.SessionId);
+                    if (info is not null)
+                        renderer.ShowSessionInfo(info);
+                    else
+                        renderer.ShowError("Session not found.");
+                }
+                catch (Exception ex)
+                {
+                    renderer.ShowError(ex.Message);
+                }
+                continue;
+            }
+
             try
             {
                 renderer.BeginResponse();

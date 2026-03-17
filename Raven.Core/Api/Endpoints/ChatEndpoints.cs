@@ -60,6 +60,25 @@ public static class ChatEndpoints
             }
         });
 
+        group.MapGet("/sessions/{sessionId}", async (
+            string sessionId,
+            ISessionStore sessions) =>
+        {
+            var info = await sessions.GetSessionAsync(sessionId);
+            if (info is null)
+                return Results.NotFound();
+
+            return Results.Ok(new SessionInfoResponse(info.SessionId, info.CreatedAt, info.LastActivityAt));
+        });
+
+        group.MapDelete("/sessions/{sessionId}", async (
+            string sessionId,
+            ISessionStore sessions) =>
+        {
+            var deleted = await sessions.DeleteSessionAsync(sessionId);
+            return deleted ? Results.NoContent() : Results.NotFound();
+        });
+
         return app;
     }
 }

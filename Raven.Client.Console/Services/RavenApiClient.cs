@@ -58,4 +58,20 @@ public class RavenApiClient(HttpClient http)
                 yield return chunk;
         }
     }
+
+    public async Task<SessionInfoResponse?> GetSessionAsync(string sessionId)
+    {
+        var response = await http.GetAsync($"/api/chat/sessions/{sessionId}");
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<SessionInfoResponse>();
+    }
+
+    public async Task DeleteSessionAsync(string sessionId)
+    {
+        var response = await http.DeleteAsync($"/api/chat/sessions/{sessionId}");
+        response.EnsureSuccessStatusCode();
+    }
 }

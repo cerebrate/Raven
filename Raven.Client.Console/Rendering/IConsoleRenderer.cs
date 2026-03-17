@@ -1,3 +1,5 @@
+using ArkaneSystems.Raven.Contracts.Chat;
+
 namespace ArkaneSystems.Raven.Client.Console.Rendering;
 
 public interface IConsoleRenderer
@@ -11,4 +13,6 @@ public interface IConsoleRenderer
     void EndResponse();
     void ShowError(string message);
     void ShowGoodbye();
+    void ShowSessionInfo(SessionInfoResponse info);
+    void ShowNewSession(string oldSessionId, string newSessionId);
 }

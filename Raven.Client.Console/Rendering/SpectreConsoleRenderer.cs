@@ -1,3 +1,4 @@
+using ArkaneSystems.Raven.Contracts.Chat;
 using Spectre.Console;
 
 namespace ArkaneSystems.Raven.Client.Console.Rendering;
@@ -33,8 +34,10 @@ public class SpectreConsoleRenderer : IConsoleRenderer
             .AddColumn(new TableColumn("[steelblue1]Command[/]").NoWrap())
             .AddColumn(new TableColumn("[grey]Description[/]"));
 
-        table.AddRow("[steelblue1]/exit[/]", "End the session and quit");
-        table.AddRow("[steelblue1]/help[/]", "Show this help");
+        table.AddRow("[steelblue1]/new[/]",     "Start a new session");
+        table.AddRow("[steelblue1]/history[/]", "Show current session info");
+        table.AddRow("[steelblue1]/help[/]",    "Show this help");
+        table.AddRow("[steelblue1]/exit[/]",    "End the session and quit");
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
@@ -71,5 +74,29 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     {
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[grey]Goodbye.[/]");
+    }
+
+    public void ShowSessionInfo(SessionInfoResponse info)
+    {
+        var table = new Table()
+            .BorderStyle(Style.Parse("grey"))
+            .AddColumn(new TableColumn("[grey]Property[/]").NoWrap())
+            .AddColumn(new TableColumn("[grey]Value[/]"));
+
+        table.AddRow("Session ID",     $"[dim]{Markup.Escape(info.SessionId)}[/]");
+        table.AddRow("Started",        $"[dim]{info.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}[/]");
+        table.AddRow("Last activity",  info.LastActivityAt.HasValue
+            ? $"[dim]{info.LastActivityAt.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss}[/]"
+            : "[dim]—[/]");
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+    }
+
+    public void ShowNewSession(string oldSessionId, string newSessionId)
+    {
+        AnsiConsole.MarkupLine($"[grey]Previous session [dim]{Markup.Escape(oldSessionId)}[/] closed.[/]");
+        AnsiConsole.MarkupLine($"[grey]New session:[/] [dim]{Markup.Escape(newSessionId)}[/]");
+        AnsiConsole.WriteLine();
     }
 }
