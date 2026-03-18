@@ -4,4 +4,4 @@ namespace ArkaneSystems.Raven.Core.Bus.Contracts;
 public sealed record ResponseStarted(
     string ResponseId,
     DateTimeOffset StartedAtUtc,
-    string? ContentType = "text/plain");
+    string? ContentType = "text/plain") : IResponseStreamEvent;

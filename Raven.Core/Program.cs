@@ -70,6 +70,7 @@ try
   // used by SqliteSessionStore. Each HTTP request gets its own instance.
   _ = builder.Services.AddScoped<ISessionStore, SqliteSessionStore> ();
   _ = builder.Services.AddScoped<IChatApplicationService, ChatApplicationService> ();
+  _ = builder.Services.AddScoped<IChatStreamBroker, ChatStreamBroker> ();
 
   _ = builder.Services.AddSingleton<IMessageTypeRegistry, InMemoryMessageTypeRegistry> ();
   _ = builder.Services.AddSingleton<IDeadLetterSink, LoggingDeadLetterSink> ();

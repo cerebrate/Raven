@@ -5,4 +5,4 @@ public sealed record ResponseDelta(
     string ResponseId,
     int Sequence,
     string Content,
-    DateTimeOffset EmittedAtUtc);
+    DateTimeOffset EmittedAtUtc) : IResponseStreamEvent;

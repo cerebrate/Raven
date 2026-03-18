@@ -4,4 +4,4 @@ namespace ArkaneSystems.Raven.Core.Bus.Contracts;
 public sealed record ResponseCompleted(
     string ResponseId,
     DateTimeOffset CompletedAtUtc,
-    string? FinalContent = null);
+    string? FinalContent = null) : IResponseStreamEvent;

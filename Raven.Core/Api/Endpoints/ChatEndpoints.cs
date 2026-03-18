@@ -1,5 +1,6 @@
-using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Contracts.Chat;
+using ArkaneSystems.Raven.Core.Application.Chat;
+using ArkaneSystems.Raven.Core.Bus.Contracts;
 using Microsoft.AspNetCore.Http.Features;
 
 namespace ArkaneSystems.Raven.Core.Api.Endpoints;
@@ -49,16 +50,16 @@ public static class ChatEndpoints
     group.MapPost ("/sessions/{sessionId}/messages/stream", async (
         string sessionId,
         SendMessageRequest request,
-        IChatApplicationService chat,
+        IChatStreamBroker streamBroker,
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
       var startedResponse = false;
 
-      var sessionExists = await chat.StreamMessageAsync(
+      var sessionExists = await streamBroker.StreamResponseEventsAsync(
           sessionId,
           request.Content,
-          async (chunk, ct) =>
+          async (streamEventEnvelope, ct) =>
           {
             if (!startedResponse)
             {
@@ -68,12 +69,9 @@ public static class ChatEndpoints
               startedResponse = true;
             }
 
-            // SSE format requires each message on its own "data: " line, followed
-            // by a blank line. Multi-line chunks have each line individually prefixed.
-            await http.Response.WriteAsync ($"data: {chunk.Replace ("\n", "\ndata: ")}\n\n", ct);
-            await http.Response.Body.FlushAsync (ct);
+            await WriteSseEventAsync(http.Response, streamEventEnvelope.Event, ct);
           },
-          cancellationToken);
+          cancellationToken: cancellationToken);
 
       if (!sessionExists)
       {
@@ -110,5 +108,26 @@ public static class ChatEndpoints
     });
 
     return app;
+  }
+
+  private static async Task WriteSseEventAsync (
+      HttpResponse response,
+      IResponseStreamEvent streamEvent,
+      CancellationToken cancellationToken)
+  {
+    var (eventName, data) = streamEvent switch
+    {
+      ResponseStarted started => ("started", started.ResponseId),
+      ResponseDelta delta => ("delta", delta.Content),
+      ResponseCompleted completed => ("completed", completed.FinalContent ?? string.Empty),
+      ResponseFailed failed => ("failed", failed.ErrorMessage),
+      _ => ("unknown", string.Empty)
+    };
+
+    // SSE format requires each message on its own "data: " line, followed
+    // by a blank line. Multi-line chunks have each line individually prefixed.
+    var normalizedData = data.Replace("\n", "\ndata: ");
+    await response.WriteAsync ($"event: {eventName}\ndata: {normalizedData}\n\n", cancellationToken);
+    await response.Body.FlushAsync (cancellationToken);
   }
 }

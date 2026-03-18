@@ -6,4 +6,4 @@ public sealed record ResponseFailed(
     string ErrorMessage,
     DateTimeOffset FailedAtUtc,
     string? ErrorCode = null,
-    bool IsRetryable = false);
+    bool IsRetryable = false) : IResponseStreamEvent;
