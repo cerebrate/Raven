@@ -1,10 +1,12 @@
-using System.Text;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
+using ArkaneSystems.Raven.Core.Bus.Dispatch;
+using System.Text;
 
 namespace ArkaneSystems.Raven.Core.Application.Chat;
 
 public sealed class ChatStreamBroker (
     IChatApplicationService chat,
+    IMessageBus messageBus,
     ILogger<ChatStreamBroker> logger) : IChatStreamBroker
 {
   public async Task<bool> StreamResponseEventsAsync (
@@ -14,18 +16,18 @@ public sealed class ChatStreamBroker (
       string? userId = null,
       CancellationToken cancellationToken = default)
   {
-    if (string.IsNullOrWhiteSpace(sessionId))
+    if (string.IsNullOrWhiteSpace (sessionId))
     {
-      throw new ArgumentException("Session ID cannot be empty.", nameof(sessionId));
+      throw new ArgumentException ("Session ID cannot be empty.", nameof (sessionId));
     }
 
-    if (string.IsNullOrWhiteSpace(content))
+    if (string.IsNullOrWhiteSpace (content))
     {
-      throw new ArgumentException("Message content cannot be empty.", nameof(content));
+      throw new ArgumentException ("Message content cannot be empty.", nameof (content));
     }
 
-    ArgumentNullException.ThrowIfNull(onEventAsync);
-    cancellationToken.ThrowIfCancellationRequested();
+    ArgumentNullException.ThrowIfNull (onEventAsync);
+    cancellationToken.ThrowIfCancellationRequested ();
 
     var session = await chat.GetSessionAsync(sessionId, cancellationToken);
     if (session is null)
@@ -38,14 +40,15 @@ public sealed class ChatStreamBroker (
     var responseContent = new StringBuilder();
     var sequence = 0;
 
-    await onEventAsync(
-        CreateEnvelope(
+    await this.EmitEventAsync (
+        CreateEnvelope (
             type: "chat.response.started.v1",
             sessionId: sessionId,
             userId: userId,
             correlationId: correlationId,
             causationId: null,
-            streamEvent: new ResponseStarted(responseId, DateTimeOffset.UtcNow)),
+            streamEvent: new ResponseStarted (responseId, DateTimeOffset.UtcNow)),
+        onEventAsync,
         cancellationToken);
 
     try
@@ -58,7 +61,7 @@ public sealed class ChatStreamBroker (
             sequence++;
             _ = responseContent.Append(chunk);
 
-            await onEventAsync(
+            await this.EmitEventAsync(
                 CreateEnvelope(
                     type: "chat.response.delta.v1",
                     sessionId: sessionId,
@@ -66,33 +69,36 @@ public sealed class ChatStreamBroker (
                     correlationId: correlationId,
                     causationId: null,
                     streamEvent: new ResponseDelta(responseId, sequence, chunk, DateTimeOffset.UtcNow)),
+                onEventAsync,
                 ct);
           },
           cancellationToken);
 
       if (!streamed)
       {
-        await onEventAsync(
-            CreateEnvelope(
+        await this.EmitEventAsync (
+            CreateEnvelope (
                 type: "chat.response.failed.v1",
                 sessionId: sessionId,
                 userId: userId,
                 correlationId: correlationId,
                 causationId: null,
-                streamEvent: new ResponseFailed(responseId, "Session became unavailable before streaming completed.", DateTimeOffset.UtcNow, ErrorCode: "session_not_found", IsRetryable: false)),
+                streamEvent: new ResponseFailed (responseId, "Session became unavailable before streaming completed.", DateTimeOffset.UtcNow, ErrorCode: "session_not_found", IsRetryable: false)),
+            onEventAsync,
             cancellationToken);
 
         return true;
       }
 
-      await onEventAsync(
-          CreateEnvelope(
+      await this.EmitEventAsync (
+          CreateEnvelope (
               type: "chat.response.completed.v1",
               sessionId: sessionId,
               userId: userId,
               correlationId: correlationId,
               causationId: null,
-              streamEvent: new ResponseCompleted(responseId, DateTimeOffset.UtcNow, responseContent.ToString())),
+              streamEvent: new ResponseCompleted (responseId, DateTimeOffset.UtcNow, responseContent.ToString ())),
+          onEventAsync,
           cancellationToken);
 
       return true;
@@ -105,20 +111,33 @@ public sealed class ChatStreamBroker (
     {
       // If the backing conversation mapping is missing, surface as stream failure
       // event without failing the HTTP pipeline after streaming has started.
-      logger.LogWarning(ex, "Streaming failed for session {SessionId}", sessionId);
+      logger.LogWarning (ex, "Streaming failed for session {SessionId}", sessionId);
 
-      await onEventAsync(
-          CreateEnvelope(
+      await this.EmitEventAsync (
+          CreateEnvelope (
               type: "chat.response.failed.v1",
               sessionId: sessionId,
               userId: userId,
               correlationId: correlationId,
               causationId: null,
-              streamEvent: new ResponseFailed(responseId, ex.Message, DateTimeOffset.UtcNow, ErrorCode: "conversation_not_found", IsRetryable: false)),
+              streamEvent: new ResponseFailed (responseId, ex.Message, DateTimeOffset.UtcNow, ErrorCode: "conversation_not_found", IsRetryable: false)),
+          onEventAsync,
           cancellationToken);
 
       return true;
     }
+  }
+
+  private async Task EmitEventAsync (
+      ResponseStreamEventEnvelope eventEnvelope,
+      Func<ResponseStreamEventEnvelope, CancellationToken, Task> onEventAsync,
+      CancellationToken cancellationToken)
+  {
+    await messageBus.PublishAsync (
+        new MessageEnvelope<ResponseStreamEventEnvelope> (eventEnvelope.Metadata, eventEnvelope),
+        cancellationToken);
+
+    await onEventAsync (eventEnvelope, cancellationToken);
   }
 
   private static ResponseStreamEventEnvelope CreateEnvelope (
@@ -138,6 +157,6 @@ public sealed class ChatStreamBroker (
         priority: MessagePriority.Normal,
         createdAtUtc: DateTimeOffset.UtcNow);
 
-    return new ResponseStreamEventEnvelope(metadata, streamEvent);
+    return new ResponseStreamEventEnvelope (metadata, streamEvent);
   }
 }

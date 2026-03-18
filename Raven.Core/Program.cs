@@ -4,6 +4,7 @@ using ArkaneSystems.Raven.Core.Api.Endpoints;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Application.Sessions;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
+using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Infrastructure.Filesystem;
 using ArkaneSystems.Raven.Core.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -72,7 +73,15 @@ try
   _ = builder.Services.AddScoped<IChatApplicationService, ChatApplicationService> ();
   _ = builder.Services.AddScoped<IChatStreamBroker, ChatStreamBroker> ();
 
-  _ = builder.Services.AddSingleton<IMessageTypeRegistry, InMemoryMessageTypeRegistry> ();
+  _ = builder.Services.AddSingleton<IMessageTypeRegistry> (_ =>
+  {
+    var registry = new InMemoryMessageTypeRegistry();
+    registry.Register("chat.response.started.v1", typeof(ResponseStreamEventEnvelope));
+    registry.Register("chat.response.delta.v1", typeof(ResponseStreamEventEnvelope));
+    registry.Register("chat.response.completed.v1", typeof(ResponseStreamEventEnvelope));
+    registry.Register("chat.response.failed.v1", typeof(ResponseStreamEventEnvelope));
+    return registry;
+  });
   _ = builder.Services.AddSingleton<IDeadLetterSink, LoggingDeadLetterSink> ();
   _ = builder.Services.AddSingleton<InProcMessageBus> ();
   _ = builder.Services.AddSingleton<IMessageBus> (sp => sp.GetRequiredService<InProcMessageBus> ());
