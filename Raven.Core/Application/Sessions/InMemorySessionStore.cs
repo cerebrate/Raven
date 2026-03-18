@@ -2,8 +2,14 @@ using System.Collections.Concurrent;
 
 namespace ArkaneSystems.Raven.Core.Application.Sessions;
 
+// In-memory implementation of ISessionStore. Kept for use in tests and as a
+// fallback during development — not registered in production (SqliteSessionStore
+// is used instead). All data is lost when the process restarts.
 public class InMemorySessionStore : ISessionStore
 {
+    // ConcurrentDictionary makes individual read/write operations thread-safe
+    // without needing explicit locks. The tuple value stores both the Foundry
+    // conversation ID and the creation timestamp.
     private readonly ConcurrentDictionary<string, (string ConversationId, DateTimeOffset CreatedAt)> _sessions = new();
 
     public Task<string> CreateSessionAsync(string conversationId)
@@ -28,6 +34,8 @@ public class InMemorySessionStore : ISessionStore
         if (entry == default)
             return Task.FromResult<SessionInfo?>(null);
 
+        // LastActivityAt is not tracked in-memory (no write-through on lookup),
+        // so it is always returned as null here.
         return Task.FromResult<SessionInfo?>(new SessionInfo(sessionId, entry.CreatedAt, null));
     }
 

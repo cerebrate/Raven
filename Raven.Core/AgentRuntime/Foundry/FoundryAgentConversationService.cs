@@ -8,15 +8,30 @@ using OpenAI.Chat;
 
 namespace ArkaneSystems.Raven.Core.AgentRuntime.Foundry;
 
+// Concrete implementation of IAgentConversationService that talks to a model
+// deployed in Microsoft Foundry via the Azure OpenAI SDK + Microsoft.Agents.AI.
+//
+// Lifetime: Singleton. The AIAgent and the session dictionary are long-lived
+// objects that should be shared for the lifetime of the process.
 public class FoundryAgentConversationService : IAgentConversationService
 {
+    // The AIAgent wraps the Azure OpenAI chat client and holds the configured
+    // system prompt and agent name. It is stateless with respect to individual
+    // conversations — session state lives in AgentSession objects below.
     private readonly AIAgent _agent;
+
+    // Maps our internal conversationId (a Guid string we generate) to the
+    // Foundry AgentSession object, which holds the conversation thread state.
+    // ConcurrentDictionary is used because requests can arrive concurrently.
     private readonly ConcurrentDictionary<string, AgentSession> _sessions = new();
 
     public FoundryAgentConversationService(IOptions<FoundryOptions> options)
     {
         var opts = options.Value;
 
+        // Build the agent from the configured Azure OpenAI endpoint using
+        // DefaultAzureCredential, which will use the logged-in Azure CLI
+        // account in development and managed identity in production.
         _agent = new AzureOpenAIClient(new Uri(opts.Endpoint), new DefaultAzureCredential())
             .GetChatClient(opts.DeploymentName)
             .AsAIAgent(
@@ -26,6 +41,9 @@ public class FoundryAgentConversationService : IAgentConversationService
 
     public async Task<string> CreateConversationAsync()
     {
+        // Ask the agent to create a new conversation thread (AgentSession).
+        // We then generate our own conversationId to use as the key so we
+        // are not coupled to whatever internal ID Foundry uses.
         var session = await _agent.CreateSessionAsync();
         var conversationId = Guid.NewGuid().ToString();
         _sessions[conversationId] = session;
@@ -37,6 +55,8 @@ public class FoundryAgentConversationService : IAgentConversationService
         if (!_sessions.TryGetValue(conversationId, out var session))
             throw new InvalidOperationException($"Conversation '{conversationId}' not found.");
 
+        // RunAsync sends the message to Foundry and waits for the full response.
+        // .Text extracts the plain-text content from the AgentResponse.
         return (await _agent.RunAsync(content, session)).Text;
     }
 
@@ -48,6 +68,11 @@ public class FoundryAgentConversationService : IAgentConversationService
         if (!_sessions.TryGetValue(conversationId, out var session))
             throw new InvalidOperationException($"Conversation '{conversationId}' not found.");
 
+        // RunStreamingAsync returns an IAsyncEnumerable of incremental update objects.
+        // We yield only updates that carry text — some updates are metadata/control frames
+        // with an empty Text property, which we skip to avoid writing blank SSE lines.
+        // [EnumeratorCancellation] ensures the CancellationToken is wired through
+        // correctly when the caller cancels iteration.
         await foreach (var update in _agent.RunStreamingAsync(content, session).WithCancellation(cancellationToken))
         {
             if (!string.IsNullOrEmpty(update.Text))

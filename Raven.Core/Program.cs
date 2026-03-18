@@ -6,6 +6,8 @@ using ArkaneSystems.Raven.Core.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
+// Bootstrap logger captures any startup failures before the full Serilog
+// pipeline (which needs the host's configuration) is ready.
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -16,28 +18,48 @@ try
 
     var builder = WebApplication.CreateBuilder(args);
 
+    // Replace the default Microsoft logging with Serilog. Configuration is
+    // read from appsettings.json / appsettings.{Environment}.json so log
+    // levels can be tuned without recompiling.
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext());
 
+    // Bind the "Foundry" section of appsettings / user-secrets to FoundryOptions
+    // so the endpoint, model deployment, and system prompt are all configurable.
     builder.Services.Configure<FoundryOptions>(
         builder.Configuration.GetSection(FoundryOptions.SectionName));
 
+    // Store the SQLite database file under the per-user LocalApplicationData
+    // folder (%LOCALAPPDATA%\Raven\raven.db on Windows) so it persists across
+    // restarts but is isolated to the current user account.
     var dbPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Raven", "raven.db");
     Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 
+    // Register a DbContext factory rather than a scoped DbContext directly.
+    // The factory lets SqliteSessionStore open and dispose its own short-lived
+    // DbContext per operation, which is safe when the store is injected into
+    // request handlers that each run on their own thread.
     builder.Services.AddDbContextFactory<RavenDbContext>(options =>
         options.UseSqlite($"Data Source={dbPath}"));
 
+    // The Foundry service is a singleton because it holds the AIAgent instance
+    // and an in-memory map of conversationId → AgentSession. These are long-lived
+    // objects that should survive for the process lifetime.
     builder.Services.AddSingleton<IAgentConversationService, FoundryAgentConversationService>();
+
+    // The session store is scoped so it aligns with the EF DbContext lifetime
+    // used by SqliteSessionStore. Each HTTP request gets its own instance.
     builder.Services.AddScoped<ISessionStore, SqliteSessionStore>();
 
     var app = builder.Build();
 
-    // Auto-migrate on startup
+    // Apply any pending EF Core migrations automatically at startup.
+    // This creates raven.db and the Sessions table on first run, and applies
+    // schema changes on subsequent runs, without requiring a manual migration step.
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<RavenDbContext>();
@@ -55,5 +77,6 @@ catch (Exception ex)
 }
 finally
 {
+    // Ensure all buffered log entries are flushed before the process exits.
     Log.CloseAndFlush();
 }

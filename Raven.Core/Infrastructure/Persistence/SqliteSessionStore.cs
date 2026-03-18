@@ -3,6 +3,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ArkaneSystems.Raven.Core.Infrastructure.Persistence;
 
+// SQLite-backed implementation of ISessionStore using EF Core.
+// Uses IDbContextFactory so each method creates and disposes its own DbContext,
+// which is the correct pattern when the store itself is registered as Scoped and
+// the factory is registered as Singleton.
 public class SqliteSessionStore(IDbContextFactory<RavenDbContext> contextFactory) : ISessionStore
 {
     public async Task<string> CreateSessionAsync(string conversationId)
@@ -31,13 +35,14 @@ public class SqliteSessionStore(IDbContextFactory<RavenDbContext> contextFactory
     {
         await using var db = await contextFactory.CreateDbContextAsync();
         var record = await db.Sessions
-            .AsNoTracking()
+            .AsNoTracking()   // read-only query; no change tracking needed
             .FirstOrDefaultAsync(s => s.SessionId == sessionId);
 
         if (record is null)
             return null;
 
-        // Touch last activity
+        // Fire-and-forget style update: stamp LastActivityAt in the same call
+        // so callers don't have to remember to do it separately.
         await db.Sessions
             .Where(s => s.SessionId == sessionId)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.LastActivityAt, DateTimeOffset.UtcNow));
@@ -60,6 +65,9 @@ public class SqliteSessionStore(IDbContextFactory<RavenDbContext> contextFactory
     public async Task<bool> DeleteSessionAsync(string sessionId)
     {
         await using var db = await contextFactory.CreateDbContextAsync();
+
+        // ExecuteDeleteAsync issues a single DELETE statement without loading
+        // the entity into memory first. Returns the number of rows affected.
         var deleted = await db.Sessions
             .Where(s => s.SessionId == sessionId)
             .ExecuteDeleteAsync();
