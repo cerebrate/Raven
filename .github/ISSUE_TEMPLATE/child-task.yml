@@ -1,0 +1,49 @@
+name: Child Task
+description: Create a scoped implementation task linked to an architecture epic.
+title: "[Task] "
+labels:
+  - type:task
+body:
+  - type: input
+    id: parent-issue
+    attributes:
+      label: Parent Epic Issue Number
+      description: Numeric issue number of the parent epic.
+      placeholder: "123"
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What this task delivers.
+      placeholder: Describe the specific output of this task.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Notes
+      description: Key implementation details, constraints, and dependencies.
+      placeholder: Add relevant technical notes.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: Implementation complete
+        - label: Tests added or updated
+        - label: Telemetry added or updated
+        - label: Documentation updated
+
+  - type: textarea
+    id: done-criteria
+    attributes:
+      label: Done Criteria
+      description: Task-specific completion conditions.
+      placeholder: Define what must be true to close this task.
+    validations:
+      required: true

@@ -5,5 +5,5 @@ namespace ArkaneSystems.Raven.Client.Console.Models;
 // the same instance and see each other's updates.
 public class SessionState
 {
-    public string SessionId { get; set; } = string.Empty;
+  public string SessionId { get; set; } = string.Empty;
 }

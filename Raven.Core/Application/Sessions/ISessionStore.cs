@@ -13,28 +13,28 @@ namespace ArkaneSystems.Raven.Core.Application.Sessions;
 // recreated without invalidating the client's session handle.
 public interface ISessionStore
 {
-    // Creates a new session record that links the given Foundry conversationId to a
-    // freshly generated sessionId. Returns the new sessionId.
-    Task<string> CreateSessionAsync(string conversationId);
+  // Creates a new session record that links the given Foundry conversationId to a
+  // freshly generated sessionId. Returns the new sessionId.
+  Task<string> CreateSessionAsync (string conversationId);
 
-    // Returns true if a session with the given sessionId exists in the store.
-    Task<bool> SessionExistsAsync(string sessionId);
+  // Returns true if a session with the given sessionId exists in the store.
+  Task<bool> SessionExistsAsync (string sessionId);
 
-    // Looks up the internal Foundry conversationId for a given sessionId.
-    // Also updates LastActivityAt as a side-effect.
-    // Returns null if the session does not exist.
-    Task<string?> GetConversationIdAsync(string sessionId);
+  // Looks up the internal Foundry conversationId for a given sessionId.
+  // Also updates LastActivityAt as a side-effect.
+  // Returns null if the session does not exist.
+  Task<string?> GetConversationIdAsync (string sessionId);
 
-    // Returns session metadata (timestamps etc.) for display purposes.
-    // Returns null if the session does not exist.
-    Task<SessionInfo?> GetSessionAsync(string sessionId);
+  // Returns session metadata (timestamps etc.) for display purposes.
+  // Returns null if the session does not exist.
+  Task<SessionInfo?> GetSessionAsync (string sessionId);
 
-    // Removes the session record. Returns true if a record was deleted, false if
-    // the sessionId was not found.
-    Task<bool> DeleteSessionAsync(string sessionId);
+  // Removes the session record. Returns true if a record was deleted, false if
+  // the sessionId was not found.
+  Task<bool> DeleteSessionAsync (string sessionId);
 }
 
 // Application-layer value type carrying the metadata we hold about a session.
 // Distinct from SessionInfoResponse (the HTTP contract) so the two can evolve
 // independently.
-public record SessionInfo(string SessionId, DateTimeOffset CreatedAt, DateTimeOffset? LastActivityAt);
+public record SessionInfo (string SessionId, DateTimeOffset CreatedAt, DateTimeOffset? LastActivityAt);
