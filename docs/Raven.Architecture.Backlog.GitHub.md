@@ -29,6 +29,9 @@ Establish a stable in-process event loop and message bus that supports both stan
 - [ ] Implement streaming event path (`ResponseStarted`, `ResponseDelta`, `ResponseCompleted`, `ResponseFailed`).
 - [ ] Propagate correlation/session/user metadata (`MessageId`, `CorrelationId`, `SessionId`, `UserId`).
 - [ ] Add dead-letter handling for unrecoverable failures.
+- [ ] Add message type registry mapping message names/domain event names to allowed payload CLR types.
+- [ ] Implement dispatch-time contract validation against registry in dispatcher skeleton.
+- [ ] Implement publish-time contract validation in each bus producer as bus users are introduced.
 
 ### Acceptance Criteria
 - [ ] All runtime requests are represented as typed envelopes with required metadata.
@@ -36,6 +39,8 @@ Establish a stable in-process event loop and message bus that supports both stan
 - [ ] Queue growth is bounded and measurable under load.
 - [ ] Failed messages are captured with reason and retry metadata.
 - [ ] End-to-end trace correlation exists for request -> tool -> response.
+- [ ] Dispatch-time contract mismatch is rejected and recorded.
+- [ ] Publish-time contract mismatch is prevented before enqueue.
 
 ### Dependencies
 - None (foundational).

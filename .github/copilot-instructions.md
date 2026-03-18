@@ -161,6 +161,11 @@ dotnet test
 - `SpectreConsoleRenderer` is production; can be mocked in tests
 - Injected into REPL loop; use for structured output, tables, markdown, etc.
 
+### Message Type Registry
+- Track a message type registry with guardrails: 
+  - Dispatch-time contract checks during dispatcher skeleton work
+  - Publish-time contract checks while implementing bus producers
+
 ## Testing
 
 ### Framework

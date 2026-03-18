@@ -479,6 +479,9 @@ Tasks:
 3. Implement `Started/Delta/Completed/Failed` streaming path.
 4. Propagate correlation/session/user metadata.
 5. Add dead-letter handling.
+6. Add a message type registry mapping domain message names to allowed payload CLR types and versioned schema intent.
+7. Add dispatch-time contract checks against the message registry as part of dispatcher skeleton implementation.
+8. Add publish-time contract checks in bus producers as each producer is implemented.
 
 Acceptance criteria:
 - Typed envelopes for all runtime requests.
@@ -486,6 +489,8 @@ Acceptance criteria:
 - No unbounded queue growth under load.
 - Failures captured with retry metadata.
 - End-to-end trace correlation available.
+- Dispatcher rejects or dead-letters messages whose metadata type does not match allowed payload contract.
+- Producers validate message contracts at publish-time before enqueueing.
 
 ### Epic 2 (P0): Workspace Layout, Safety, and Persistence
 **Goal:** Durable workspace with scoped access and safe writes.
