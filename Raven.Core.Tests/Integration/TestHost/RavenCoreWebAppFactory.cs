@@ -11,43 +11,43 @@ namespace ArkaneSystems.Raven.Core.Tests.Integration.TestHost;
 
 public sealed class RavenCoreWebAppFactory : WebApplicationFactory<Program>
 {
-    private readonly string _workspaceRoot = Path.Combine(
+  private readonly string _workspaceRoot = Path.Combine(
         Path.GetTempPath(),
         "Raven.Core.Tests",
         Guid.NewGuid().ToString("N"));
-    private readonly string? _previousWorkspaceRoot;
+  private readonly string? _previousWorkspaceRoot;
 
-    public RavenCoreWebAppFactory()
+  public RavenCoreWebAppFactory ()
+  {
+    _previousWorkspaceRoot = Environment.GetEnvironmentVariable ("RAVEN_WORKSPACE_ROOT");
+    Environment.SetEnvironmentVariable ("RAVEN_WORKSPACE_ROOT", _workspaceRoot);
+  }
+
+  protected override void ConfigureWebHost (IWebHostBuilder builder)
+  {
+    builder.UseEnvironment ("Development");
+
+    builder.ConfigureAppConfiguration ((_, configurationBuilder) =>
     {
-        _previousWorkspaceRoot = Environment.GetEnvironmentVariable("RAVEN_WORKSPACE_ROOT");
-        Environment.SetEnvironmentVariable("RAVEN_WORKSPACE_ROOT", _workspaceRoot);
-    }
+      configurationBuilder.AddInMemoryCollection (new Dictionary<string, string?>
+      {
+        ["Raven:Workspace:RootPath"] = _workspaceRoot
+      });
+    });
 
-    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    builder.ConfigureServices (services =>
     {
-        builder.UseEnvironment("Development");
+      services.RemoveAll<IAgentConversationService> ();
+      services.RemoveAll<ISessionStore> ();
 
-        builder.ConfigureAppConfiguration((_, configurationBuilder) =>
-        {
-            configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Raven:Workspace:RootPath"] = _workspaceRoot
-            });
-        });
+      services.AddSingleton<IAgentConversationService, FakeAgentConversationService> ();
+      services.AddSingleton<ISessionStore, InMemorySessionStore> ();
+    });
+  }
 
-        builder.ConfigureServices(services =>
-        {
-            services.RemoveAll<IAgentConversationService>();
-            services.RemoveAll<ISessionStore>();
-
-            services.AddSingleton<IAgentConversationService, FakeAgentConversationService>();
-            services.AddSingleton<ISessionStore, InMemorySessionStore>();
-        });
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        Environment.SetEnvironmentVariable("RAVEN_WORKSPACE_ROOT", _previousWorkspaceRoot);
-        base.Dispose(disposing);
-    }
+  protected override void Dispose (bool disposing)
+  {
+    Environment.SetEnvironmentVariable ("RAVEN_WORKSPACE_ROOT", _previousWorkspaceRoot);
+    base.Dispose (disposing);
+  }
 }

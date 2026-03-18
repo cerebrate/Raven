@@ -4,7 +4,7 @@ namespace ArkaneSystems.Raven.Contracts.Chat;
 // Carries the metadata Raven.Core holds about a session — when it was
 // created and when it last saw activity. LastActivityAt is nullable
 // because a brand-new session will not have processed any messages yet.
-public record SessionInfoResponse(
+public record SessionInfoResponse (
     string SessionId,
     DateTimeOffset CreatedAt,
     DateTimeOffset? LastActivityAt);

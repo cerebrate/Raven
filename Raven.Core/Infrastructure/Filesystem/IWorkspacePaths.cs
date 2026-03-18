@@ -2,24 +2,24 @@ namespace ArkaneSystems.Raven.Core.Infrastructure.Filesystem;
 
 public interface IWorkspacePaths
 {
-    string GetWorkspaceRoot();
+  string GetWorkspaceRoot ();
 
-    string GetSessionsPath();
+  string GetSessionsPath ();
 
-    string GetSessionDatabasePath();
+  string GetSessionDatabasePath ();
 
-    string GetConfigPath();
+  string GetConfigPath ();
 
-    string ResolveScopedPath(string relativePath);
+  string ResolveScopedPath (string relativePath);
 
-    void EnsureWorkspaceStructure();
+  void EnsureWorkspaceStructure ();
 
-    void EnsureDirectory(string path);
+  void EnsureDirectory (string path);
 
-    WorkspaceIntegrityReport CheckIntegrity();
+  WorkspaceIntegrityReport CheckIntegrity ();
 }
 
-public sealed record WorkspaceIntegrityReport(IReadOnlyList<string> Issues)
+public sealed record WorkspaceIntegrityReport (IReadOnlyList<string> Issues)
 {
-    public bool IsHealthy => Issues.Count == 0;
+  public bool IsHealthy => Issues.Count == 0;
 }
