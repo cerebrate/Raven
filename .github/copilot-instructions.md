@@ -19,11 +19,11 @@ The architecture uses a **session-based conversation model** where clients obtai
 1. `Raven:Workspace:RootPath` in `appsettings.json`
 2. `RAVEN_WORKSPACE_ROOT` environment variable
 3. Container detection: if running in container, use `/data/workspace`
-4. Local default: `%LOCALAPPDATA%\Arkane Systems\Raven\Workspace` (Windows); `~/.local/share/Raven/workspace` (Linux/macOS)
+4. Local default: `%LOCALAPPDATA%\Arkane Systems\Raven\Workspace` (Windows); `~/.local/share/Arkane Systems/Raven/workspace` (Linux/macOS)
 
 **IMPORTANT**: 
 - For containerized deployments, always use `/data/workspace`; mount persistent volumes here, keep binaries under `/app`
-- For local development, include the company folder 'Arkane Systems' before 'Raven'
+- For local development on both Windows and Linux/macOS, workspace paths should include the company folder `Arkane Systems` before `Raven`.
 
 #### Workspace Structure (Current & Planned)
 ```
