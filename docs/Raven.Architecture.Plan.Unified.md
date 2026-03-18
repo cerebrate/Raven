@@ -141,7 +141,6 @@ Minimum metadata:
 - **Sessions** (state snapshots, retention, import/export)
 - **Identity** (AGENT/SOUL/USER profile config)
 - **Infrastructure** (persistence, filesystem, telemetry, clock)
-- **Contracts** (DTOs until dedicated Raven.Contracts exists)
 
 ---
 
@@ -368,7 +367,6 @@ Raven.Core/
     Configuration/
     Telemetry/
     Filesystem/
-  Contracts/
   Program.cs
 ```
 
