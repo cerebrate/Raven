@@ -165,6 +165,103 @@ Operational requirements:
 - retention and cleanup,
 - startup integrity checks.
 
+#### Workspace root resolution (local + container)
+Use a single root resolver with this precedence:
+1. `Raven:Workspace:RootPath` (appsettings / user secrets / environment-bound config)
+2. `RAVEN_WORKSPACE_ROOT` environment variable
+3. container default (when `DOTNET_RUNNING_IN_CONTAINER=true`): `/data/workspace`
+4. local default:
+   - Windows: `%LOCALAPPDATA%/Raven/Workspace`
+   - Linux/macOS: `${HOME}/.local/share/Raven/workspace`
+
+Container guidance:
+- mount a shared/persistent volume at `/data/workspace`
+- keep binaries/runtime under `/app` and mutable state under `/data/workspace`
+- never rely on container-layer filesystem for persistent state
+
+#### Workspace baseline structure (v1)
+```text
+{workspace-root}/
+  sessions/
+    db/
+      raven.db
+    logs/
+    snapshots/
+  memory/
+  heartbeat/
+  artifacts/
+  audit/
+  config/
+    appsettings.json
+    appsettings.{Environment}.json
+  tmp/
+```
+
+Notes:
+- session SQLite file moves to `{workspace-root}/sessions/db/raven.db`
+- `tmp` is explicitly non-durable scratch space
+
+#### Helper abstractions/functions
+Add an infrastructure-level workspace path service (name can vary) with at least:
+- `GetWorkspaceRoot()`
+- `EnsureWorkspaceStructure()`
+- `GetSessionsPath()`
+- `GetSessionDatabasePath()`
+- `GetConfigPath()`
+- `ResolveScopedPath(relativePath)` (canonicalize + ensure under root)
+- `EnsureDirectory(path)`
+
+Supporting utilities:
+- startup integrity check (`WorkspaceIntegrityReport`)
+- atomic write helper (`write temp -> fsync -> replace`) for critical files
+- optional cross-process lock helper for one-writer operations
+
+#### Workspace-owned configuration (longer-run)
+Yes, this is accommodatable, but should be done with a two-stage configuration bootstrap.
+
+Recommended model:
+1. **Bootstrap config (host-level, minimal):**
+   - resolve workspace root using CLI/env + optional local appsettings defaults
+   - enough only to locate workspace and initialize logging baseline
+2. **Workspace config (primary app config):**
+   - load from `{workspace-root}/config/appsettings.json`
+   - optional `{workspace-root}/config/appsettings.{Environment}.json`
+   - optional workspace-local secrets file for local/dev scenarios
+
+Suggested precedence (high -> low):
+1. command-line args
+2. environment variables
+3. workspace `appsettings.{Environment}.json`
+4. workspace `appsettings.json`
+5. built-in app defaults (repo/app image)
+
+Why two-stage:
+- the app cannot fully rely on workspace config until workspace path is known
+- keeps startup deterministic for both local and containerized runs
+- allows immutable image defaults with mutable workspace overrides
+
+Migration strategy (when implemented):
+- first run: if workspace config is missing, seed it from bundled defaults
+- subsequent runs: workspace config is authoritative for mutable settings
+- keep schema version in config and support additive migrations
+- never auto-overwrite user-edited workspace config
+
+#### Session DB move/migration plan
+Startup migration behavior (one-time, idempotent):
+1. Resolve new DB path: `{workspace-root}/sessions/db/raven.db`
+2. Detect legacy DB path (currently LocalApplicationData-based path)
+3. If new DB does not exist and legacy DB exists:
+   - create target directories
+   - copy/move legacy DB to new path
+   - preserve backup of legacy file until successful startup verification
+4. Point EF Core Sqlite connection string only to new workspace path
+5. Log migration outcome with actionable messages
+
+Guardrails:
+- never overwrite an existing new DB during migration
+- if both DBs exist, prefer new path and emit warning-level telemetry
+- if migration fails, continue in read-safe mode only when configured; otherwise fail fast
+
 ### Memory
 Memory tiers:
 - **Scratchpad** (short-term, session-scoped)
@@ -410,20 +507,24 @@ Acceptance criteria:
 **Goal:** Durable workspace with scoped access and safe writes.
 
 Tasks:
-1. Implement workspace directory contract.
-2. Add path-policy guardrails.
-3. Add atomic write utility.
-4. Implement retention cleanup.
-5. Add integrity/recovery startup checks.
+1. Implement workspace root resolution contract (local + container).
+2. Implement workspace structure initializer and integrity checks.
+3. Add scoped path-policy guardrails.
+4. Add atomic write utility.
+5. Move session SQLite DB into workspace and add startup migration from legacy path.
+6. Implement retention cleanup.
+7. Define two-stage config bootstrap design for future workspace-owned appsettings.
 
 Acceptance criteria:
-- Workspace auto-initializes correctly.
+- Workspace auto-initializes correctly in local and container modes.
 - Unauthorized paths are blocked.
-- Crash-safe write behavior for critical files.
+- Crash-safe write behavior exists for critical files.
+- Session DB is stored at `{workspace-root}/sessions/db/raven.db`.
+- One-time migration from legacy DB path is idempotent and logged.
 - Retention policy executes as configured.
-- Integrity checks report actionable issues.
+- Two-stage config bootstrap design is documented for implementation in a follow-on phase.
 
-### Epic 3 (P1): Session Engine and Lifecycle Management
+### Epic 3 (P0): Session Engine and Lifecycle Management
 **Goal:** Isolated multi-session operation with replay/rejoin controls.
 
 Tasks:
@@ -439,7 +540,7 @@ Acceptance criteria:
 - Deletion policy is enforceable/auditable.
 - Export/import replay is consistent.
 
-### Epic 4 (P1): Short-Term + Long-Term Memory Pipeline
+### Epic 4 (P1 Core): Short-Term + Long-Term Memory Pipeline
 **Goal:** Practical, explainable memory continuity.
 
 Tasks:
@@ -456,7 +557,7 @@ Acceptance criteria:
 - Retrieval explains why memory was selected.
 - Contradictions are flagged/handled by policy.
 
-### Epic 5 (P1): Tool/Skill Registry, Discovery, and Permissions
+### Epic 5 (P1 Core): Tool/Skill Registry, Discovery, and Permissions
 **Goal:** One unified, policy-aware tool interface.
 
 Tasks:
@@ -472,7 +573,7 @@ Acceptance criteria:
 - Unhealthy tools are safely bypassed/disabled.
 - Audit trail captures actor/action/outcome.
 
-### Epic 6 (P1): Client Adapter Layer and Identity Boundaries
+### Epic 6 (P1 Intelligence): Client Adapter Layer and Identity Boundaries
 **Goal:** Consistent multi-client behavior with correct attribution.
 
 Tasks:
@@ -540,11 +641,12 @@ Acceptance criteria:
 ---
 
 ## Delivery Sequence
-1. **Phase A (P0):** Epic 1 + Epic 2
-2. **Phase B (P1 Core):** Epic 3 + Epic 5
-3. **Phase C (P1 Intelligence):** Epic 4 + Epic 6
-4. **Phase D (P2 Features):** Epic 7 + Epic 8
-5. **Phase E (P2 Hardening):** Epic 9
+1. **Phase A0 (P0 skip-ahead):** Epic 2 workspace root/structure + session DB relocation/migration
+2. **Phase A1 (P0):** Epic 1 core bus + streaming runtime
+3. **Phase B (P1 Core):** Epic 3 + Epic 5
+4. **Phase C (P1 Intelligence):** Epic 4 + Epic 6
+5. **Phase D (P2 Features):** Epic 7 + Epic 8
+6. **Phase E (P2 Hardening):** Epic 9
 
 ---
 

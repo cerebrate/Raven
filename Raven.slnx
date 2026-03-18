@@ -3,6 +3,8 @@
     <File Path="docs/Raven.Architecture.Plan.md" />
     <File Path="docs/Raven.Architecture.Plan.Unified.md" />
     <File Path="docs/Raven.Future.Suggestions.md" />
+    <File Path="LICENSE.txt" />
+    <File Path="README.md" />
   </Folder>
   <Project Path="Raven.Client.Console/Raven.Client.Console.csproj" />
   <Project Path="Raven.Contracts/Raven.Contracts.csproj" />

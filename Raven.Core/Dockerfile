@@ -26,4 +26,9 @@ RUN dotnet publish "./Raven.Core.csproj" -c $BUILD_CONFIGURATION -o /app/publish
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+USER root
+RUN mkdir -p /data/workspace && chown -R $APP_UID /data
+ENV RAVEN_WORKSPACE_ROOT=/data/workspace
+VOLUME ["/data/workspace"]
+USER $APP_UID
 ENTRYPOINT ["dotnet", "Raven.Core.dll"]

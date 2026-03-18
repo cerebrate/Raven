@@ -2,6 +2,7 @@ using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.AgentRuntime.Foundry;
 using ArkaneSystems.Raven.Core.Api.Endpoints;
 using ArkaneSystems.Raven.Core.Application.Sessions;
+using ArkaneSystems.Raven.Core.Infrastructure.Filesystem;
 using ArkaneSystems.Raven.Core.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -31,13 +32,23 @@ try
     builder.Services.Configure<FoundryOptions>(
         builder.Configuration.GetSection(FoundryOptions.SectionName));
 
-    // Store the SQLite database file under the per-user LocalApplicationData
-    // folder (%LOCALAPPDATA%\Raven\raven.db on Windows) so it persists across
-    // restarts but is isolated to the current user account.
-    var dbPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Raven", "raven.db");
-    Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+    var workspaceRoot = WorkspacePathResolver.ResolveWorkspaceRoot(builder.Configuration);
+    var workspacePaths = new WorkspacePaths(workspaceRoot);
+    workspacePaths.EnsureWorkspaceStructure();
+
+    var workspaceIntegrity = workspacePaths.CheckIntegrity();
+    if (!workspaceIntegrity.IsHealthy)
+    {
+        throw new InvalidOperationException(
+            $"Workspace integrity checks failed: {string.Join(" | ", workspaceIntegrity.Issues)}");
+    }
+
+    builder.Services.AddSingleton<IWorkspacePaths>(workspacePaths);
+
+    var dbPath = workspacePaths.GetSessionDatabasePath();
+
+    Log.Information("Using workspace root {WorkspaceRoot}", workspacePaths.GetWorkspaceRoot());
+    Log.Information("Using session database path {DatabasePath}", dbPath);
 
     // Register a DbContext factory rather than a scoped DbContext directly.
     // The factory lets SqliteSessionStore open and dispose its own short-lived
