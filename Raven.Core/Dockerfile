@@ -2,7 +2,8 @@
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-USER $APP_UID
+ENV APP_UID=1000
+USER ${APP_UID}
 WORKDIR /app
 EXPOSE 8080
 
@@ -27,7 +28,7 @@ FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 USER root
-RUN mkdir -p /data/workspace && chown -R $APP_UID /data
+RUN mkdir -p /data/workspace && chown -R $APP_UID /data/workspace
 ENV RAVEN_WORKSPACE_ROOT=/data/workspace
 VOLUME ["/data/workspace"]
 USER $APP_UID
