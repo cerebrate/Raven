@@ -91,3 +91,5 @@ finally
     // Ensure all buffered log entries are flushed before the process exits.
     Log.CloseAndFlush();
 }
+
+public partial class Program;
