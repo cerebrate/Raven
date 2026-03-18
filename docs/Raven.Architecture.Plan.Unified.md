@@ -246,22 +246,6 @@ Migration strategy (when implemented):
 - keep schema version in config and support additive migrations
 - never auto-overwrite user-edited workspace config
 
-#### Session DB move/migration plan
-Startup migration behavior (one-time, idempotent):
-1. Resolve new DB path: `{workspace-root}/sessions/db/raven.db`
-2. Detect legacy DB path (currently LocalApplicationData-based path)
-3. If new DB does not exist and legacy DB exists:
-   - create target directories
-   - copy/move legacy DB to new path
-   - preserve backup of legacy file until successful startup verification
-4. Point EF Core Sqlite connection string only to new workspace path
-5. Log migration outcome with actionable messages
-
-Guardrails:
-- never overwrite an existing new DB during migration
-- if both DBs exist, prefer new path and emit warning-level telemetry
-- if migration fails, continue in read-safe mode only when configured; otherwise fail fast
-
 ### Memory
 Memory tiers:
 - **Scratchpad** (short-term, session-scoped)

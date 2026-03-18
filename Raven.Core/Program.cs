@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.AgentRuntime.Foundry;
 using ArkaneSystems.Raven.Core.Api.Endpoints;
+using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Application.Sessions;
 using ArkaneSystems.Raven.Core.Infrastructure.Filesystem;
 using ArkaneSystems.Raven.Core.Infrastructure.Persistence;
@@ -65,6 +66,9 @@ try
   // The session store is scoped so it aligns with the EF DbContext lifetime
   // used by SqliteSessionStore. Each HTTP request gets its own instance.
   _ = builder.Services.AddScoped<ISessionStore, SqliteSessionStore> ();
+
+  // The chat application service itself.
+  _ = builder.Services.AddScoped<IChatApplicationService, ChatApplicationService> ();
 
   var app = builder.Build();
 

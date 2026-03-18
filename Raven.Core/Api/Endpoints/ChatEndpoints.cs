@@ -1,6 +1,5 @@
+using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Contracts.Chat;
-using ArkaneSystems.Raven.Core.AgentRuntime;
-using ArkaneSystems.Raven.Core.Application.Sessions;
 using Microsoft.AspNetCore.Http.Features;
 
 namespace ArkaneSystems.Raven.Core.Api.Endpoints;
@@ -18,11 +17,10 @@ public static class ChatEndpoints
     // Creates a new conversation with the agent and a matching session record.
     // Returns the sessionId the client should use in all subsequent calls.
     group.MapPost ("/sessions", async (
-        IAgentConversationService conversations,
-        ISessionStore sessions) =>
+        IChatApplicationService chat,
+        CancellationToken cancellationToken) =>
     {
-      var conversationId = await conversations.CreateConversationAsync();
-      var sessionId = await sessions.CreateSessionAsync(conversationId);
+      var sessionId = await chat.CreateSessionAsync(cancellationToken);
       return Results.Ok (new CreateSessionResponse (sessionId));
     });
 
@@ -32,14 +30,13 @@ public static class ChatEndpoints
     group.MapPost ("/sessions/{sessionId}/messages", async (
         string sessionId,
         SendMessageRequest request,
-        IAgentConversationService conversations,
-        ISessionStore sessions) =>
+        IChatApplicationService chat,
+        CancellationToken cancellationToken) =>
     {
-      var conversationId = await sessions.GetConversationIdAsync(sessionId);
-      if (conversationId is null)
+      var reply = await chat.SendMessageAsync(sessionId, request.Content, cancellationToken);
+      if (reply is null)
         return Results.NotFound ();
 
-      var reply = await conversations.SendMessageAsync(conversationId, request.Content);
       return Results.Ok (new SendMessageResponse (sessionId, reply));
     });
 
@@ -52,28 +49,35 @@ public static class ChatEndpoints
     group.MapPost ("/sessions/{sessionId}/messages/stream", async (
         string sessionId,
         SendMessageRequest request,
-        IAgentConversationService conversations,
-        ISessionStore sessions,
+        IChatApplicationService chat,
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
-      var conversationId = await sessions.GetConversationIdAsync(sessionId);
-      if (conversationId is null)
+      var startedResponse = false;
+
+      var sessionExists = await chat.StreamMessageAsync(
+          sessionId,
+          request.Content,
+          async (chunk, ct) =>
+          {
+            if (!startedResponse)
+            {
+              http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
+              http.Response.ContentType = "text/event-stream";
+              http.Response.Headers["Cache-Control"] = "no-cache";
+              startedResponse = true;
+            }
+
+            // SSE format requires each message on its own "data: " line, followed
+            // by a blank line. Multi-line chunks have each line individually prefixed.
+            await http.Response.WriteAsync ($"data: {chunk.Replace ("\n", "\ndata: ")}\n\n", ct);
+            await http.Response.Body.FlushAsync (ct);
+          },
+          cancellationToken);
+
+      if (!sessionExists)
       {
         http.Response.StatusCode = 404;
-        return;
-      }
-
-      http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
-      http.Response.ContentType = "text/event-stream";
-      http.Response.Headers["Cache-Control"] = "no-cache";
-
-      await foreach (var chunk in conversations.StreamMessageAsync (conversationId, request.Content, cancellationToken))
-      {
-        // SSE format requires each message on its own "data: " line, followed
-        // by a blank line. Multi-line chunks have each line individually prefixed.
-        await http.Response.WriteAsync ($"data: {chunk.Replace ("\n", "\ndata: ")}\n\n", cancellationToken);
-        await http.Response.Body.FlushAsync (cancellationToken);
       }
     });
 
@@ -82,9 +86,10 @@ public static class ChatEndpoints
     // Used by the console client's /history command.
     group.MapGet ("/sessions/{sessionId}", async (
         string sessionId,
-        ISessionStore sessions) =>
+        IChatApplicationService chat,
+        CancellationToken cancellationToken) =>
     {
-      var info = await sessions.GetSessionAsync(sessionId);
+      var info = await chat.GetSessionAsync(sessionId, cancellationToken);
       if (info is null)
         return Results.NotFound ();
 
@@ -97,9 +102,10 @@ public static class ChatEndpoints
     // creating a new one.
     group.MapDelete ("/sessions/{sessionId}", async (
         string sessionId,
-        ISessionStore sessions) =>
+        IChatApplicationService chat,
+        CancellationToken cancellationToken) =>
     {
-      var deleted = await sessions.DeleteSessionAsync(sessionId);
+      var deleted = await chat.DeleteSessionAsync(sessionId, cancellationToken);
       return deleted ? Results.NoContent () : Results.NotFound ();
     });
 
