@@ -184,6 +184,25 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     Assert.Contains ("\"IsRetryable\":false", streamPayload, StringComparison.Ordinal);
   }
 
+  [Fact]
+  public async Task CreateSession_EchoesProvidedCorrelationId_Header ()
+  {
+    const string correlationId = "test-correlation-id";
+
+    using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat/sessions")
+    {
+      Content = JsonContent.Create(new { })
+    };
+
+    _ = request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+
+    var response = await this._client.SendAsync(request, TestContext.Current.CancellationToken);
+
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var values));
+    Assert.Equal(correlationId, Assert.Single(values));
+  }
+
   private void ClearAgentConversations ()
   {
     var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;

@@ -12,9 +12,12 @@ namespace ArkaneSystems.Raven.Core.Api.Endpoints;
 // Grouping under "/api/chat" means that prefix is not repeated on each route.
 public static class ChatEndpoints
 {
+  private const string CorrelationHeaderName = "X-Correlation-Id";
+
   public static IEndpointRouteBuilder MapChatEndpoints (this IEndpointRouteBuilder app)
   {
     var group = app.MapGroup("/api/chat");
+    _ = group.AddEndpointFilter(new CorrelationScopeEndpointFilter());
 
     // POST /api/chat/sessions
     // Creates a new conversation with the agent and a matching session record.
@@ -145,5 +148,31 @@ public static class ChatEndpoints
     var normalizedData = data.Replace("\n", "\ndata: ");
     await response.WriteAsync ($"event: {eventName}\ndata: {normalizedData}\n\n", cancellationToken);
     await response.Body.FlushAsync (cancellationToken);
+  }
+
+  private sealed class CorrelationScopeEndpointFilter : IEndpointFilter
+  {
+    public async ValueTask<object?> InvokeAsync (EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+      var http = context.HttpContext;
+      var loggerFactory = http.RequestServices.GetRequiredService<ILoggerFactory>();
+      var logger = loggerFactory.CreateLogger("Raven.Core.Api.Correlation");
+
+      var incomingCorrelationId = http.Request.Headers[CorrelationHeaderName].ToString();
+      var correlationId = string.IsNullOrWhiteSpace(incomingCorrelationId)
+        ? Guid.NewGuid().ToString()
+        : incomingCorrelationId;
+
+      http.Response.Headers[CorrelationHeaderName] = correlationId;
+
+      using var _ = logger.BeginScope(new Dictionary<string, object>
+      {
+        ["CorrelationId"] = correlationId,
+        ["RequestPath"] = http.Request.Path.Value ?? string.Empty,
+        ["RequestMethod"] = http.Request.Method
+      });
+
+      return await next(context);
+    }
   }
 }

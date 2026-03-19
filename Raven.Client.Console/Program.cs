@@ -75,7 +75,7 @@ static async Task WaitForRavenCoreReadyAsync (Uri baseAddress, CancellationToken
       lastFailure = new HttpRequestException (
           $"Health probe returned unexpected status code {(int)response.StatusCode} ({response.StatusCode}).");
     }
-    catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException)
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
     {
       lastFailure = ex;
     }
