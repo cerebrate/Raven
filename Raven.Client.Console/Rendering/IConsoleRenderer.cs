@@ -20,9 +20,9 @@ public interface IConsoleRenderer
   // Write the prompt character(s) that precede user input (no newline).
   void WriteUserPrompt ();
 
-  // Render a streaming agent response as Markdown inside a Live display region.
-  // Accumulates chunks as they arrive, re-rendering the Markdown on each update,
-  // and stops the Live region once the stream is exhausted.
+  // Render a streaming agent response to the console.
+  // The default SpectreConsoleRenderer implementation runs an AnsiConsole.Status spinner
+  // while accumulating chunks, then renders the full accumulated Markdown once when the stream completes.
   Task RenderResponseStreamAsync (IAsyncEnumerable<string> chunks, CancellationToken cancellationToken = default);
 
   // Display an error message.
