@@ -9,13 +9,24 @@ public sealed class LoggingDeadLetterSink (ILogger<LoggingDeadLetterSink> logger
   {
     ArgumentNullException.ThrowIfNull(entry);
 
+    using var _ = logger.BeginScope(new Dictionary<string, object?>
+    {
+      ["MessageId"] = entry.Metadata.MessageId,
+      ["CorrelationId"] = entry.Metadata.CorrelationId,
+      ["CausationId"] = entry.Metadata.CausationId,
+      ["SessionId"] = entry.Metadata.SessionId,
+      ["UserId"] = entry.Metadata.UserId,
+      ["MessageType"] = entry.Metadata.Type,
+      ["PayloadType"] = entry.PayloadType,
+      ["FailedAtUtc"] = entry.FailedAtUtc
+    });
+
     logger.LogWarning(
-        "Dead-lettered message {MessageId} type {MessageType} payload {PayloadType}. Reason: {Reason}. ExceptionType: {ExceptionType}",
-        entry.Metadata.MessageId,
+        "Dead-lettered message type {MessageType}. Reason: {Reason}. ExceptionType: {ExceptionType}. ExceptionMessage: {ExceptionMessage}",
         entry.Metadata.Type,
-        entry.PayloadType,
         entry.Reason,
-        entry.ExceptionType);
+        entry.ExceptionType,
+        entry.ExceptionMessage);
 
     return Task.CompletedTask;
   }

@@ -73,11 +73,21 @@ public sealed class InProcMessageBus : BackgroundService, IMessageBus
 
   private async Task DispatchAsync (DispatchMessage message, CancellationToken cancellationToken)
   {
+    using var _ = _logger.BeginScope(new Dictionary<string, object?>
+    {
+      ["MessageId"] = message.Metadata.MessageId,
+      ["CorrelationId"] = message.Metadata.CorrelationId,
+      ["CausationId"] = message.Metadata.CausationId,
+      ["SessionId"] = message.Metadata.SessionId,
+      ["UserId"] = message.Metadata.UserId,
+      ["MessageType"] = message.Metadata.Type,
+      ["Priority"] = message.Metadata.Priority
+    });
+
     if (!_messageTypeRegistry.IsAllowed(message.Metadata.Type, message.PayloadType))
     {
       _logger.LogWarning(
-          "Dispatch contract mismatch for message {MessageId}. MessageType: {MessageType}. PayloadType: {PayloadType}",
-          message.Metadata.MessageId,
+          "Dispatch contract mismatch for message type {MessageType}. PayloadType: {PayloadType}",
           message.Metadata.Type,
           message.PayloadType.FullName ?? message.PayloadType.Name);
 
@@ -113,8 +123,7 @@ public sealed class InProcMessageBus : BackgroundService, IMessageBus
 
       _logger.LogError(
           rootException,
-          "Dispatch failed for message {MessageId} of type {MessageType}",
-          message.Metadata.MessageId,
+          "Dispatch failed for message type {MessageType}",
           message.Metadata.Type);
 
       await _deadLetterSink.WriteAsync(
