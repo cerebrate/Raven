@@ -13,8 +13,7 @@ public sealed class ChatStreamBroker (
   public async Task<ChatStreamStartResult?> StartResponseStreamAsync (
       string sessionId,
       string content,
-      string? correlationId = null,
-      string? userId = null,
+      ChatRequestContext? requestContext = null,
       CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace (sessionId))
@@ -41,11 +40,13 @@ public sealed class ChatStreamBroker (
       throw new InvalidOperationException ($"Response stream '{responseId}' already exists.");
     }
 
-    var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
-      ? Guid.NewGuid().ToString()
-      : correlationId;
+    var context = requestContext ?? ChatRequestContext.Empty;
 
-    var completion = this.PublishStreamAsync(responseId, sessionId, content, resolvedCorrelationId, userId, cancellationToken);
+    var resolvedCorrelationId = string.IsNullOrWhiteSpace(context.CorrelationId)
+      ? Guid.NewGuid().ToString()
+      : context.CorrelationId;
+
+    var completion = this.PublishStreamAsync(responseId, sessionId, content, resolvedCorrelationId, context.UserId, cancellationToken);
     return new ChatStreamStartResult (responseId, completion);
   }
 
@@ -94,8 +95,7 @@ public sealed class ChatStreamBroker (
             await this.PublishEventAsync(deltaEnvelope, ct);
             causationId = deltaEnvelope.Metadata.MessageId;
           },
-          correlationId: correlationId,
-          userId: userId,
+          requestContext: new ChatRequestContext(correlationId, userId),
           cancellationToken: cancellationToken);
 
       if (!streamed)

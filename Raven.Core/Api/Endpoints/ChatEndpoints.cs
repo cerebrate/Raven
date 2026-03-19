@@ -41,16 +41,15 @@ public static class ChatEndpoints
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
-      var correlationId = ResolveCorrelationId(http);
+      var requestContext = BuildRequestContext(http);
 
       try
       {
         var reply = await chat.SendMessageAsync(
             sessionId,
             request.Content,
-            correlationId: correlationId,
-            userId: null,
-            cancellationToken: cancellationToken);
+            requestContext,
+            cancellationToken);
 
         return reply is null ? Results.NotFound () : Results.Ok (new SendMessageResponse (sessionId, reply));
       }
@@ -74,14 +73,13 @@ public static class ChatEndpoints
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
-      var correlationId = ResolveCorrelationId(http);
+      var requestContext = BuildRequestContext(http);
 
       var stream = await streamBroker.StartResponseStreamAsync(
           sessionId,
           request.Content,
-          correlationId: correlationId,
-          userId: null,
-          cancellationToken: cancellationToken);
+          requestContext,
+          cancellationToken);
 
       if (stream is null)
       {
@@ -149,6 +147,9 @@ public static class ChatEndpoints
     var headerValue = http.Request.Headers[CorrelationHeaderName].ToString();
     return string.IsNullOrWhiteSpace(headerValue) ? Guid.NewGuid().ToString() : headerValue;
   }
+
+  private static ChatRequestContext BuildRequestContext (HttpContext http) =>
+      new(ResolveCorrelationId(http), UserId: null);
 
   private static async Task WriteSseEventAsync (
       HttpResponse response,

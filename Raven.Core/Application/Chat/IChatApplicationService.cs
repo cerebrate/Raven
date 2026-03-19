@@ -13,8 +13,7 @@ public interface IChatApplicationService
   Task<string?> SendMessageAsync (
       string sessionId,
       string content,
-      string? correlationId = null,
-      string? userId = null,
+      ChatRequestContext? requestContext = null,
       CancellationToken cancellationToken = default);
 
   // Streams message chunks for a session by invoking onChunkAsync for each chunk.
@@ -23,8 +22,7 @@ public interface IChatApplicationService
       string sessionId,
       string content,
       Func<string, CancellationToken, Task> onChunkAsync,
-      string? correlationId = null,
-      string? userId = null,
+      ChatRequestContext? requestContext = null,
       CancellationToken cancellationToken = default);
 
   // Returns session metadata, or null when the session is unknown.

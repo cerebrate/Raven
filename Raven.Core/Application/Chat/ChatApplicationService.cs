@@ -22,8 +22,7 @@ public sealed class ChatApplicationService (
   public async Task<string?> SendMessageAsync (
       string sessionId,
       string content,
-      string? correlationId = null,
-      string? userId = null,
+      ChatRequestContext? requestContext = null,
       CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
@@ -44,6 +43,8 @@ public sealed class ChatApplicationService (
       return null;
     }
 
+    var context = requestContext ?? ChatRequestContext.Empty;
+
     try
     {
       return await conversations.SendMessageAsync(conversationId, content);
@@ -57,8 +58,8 @@ public sealed class ChatApplicationService (
           "SendMessage",
           sessionId,
           ex.ConversationId,
-          correlationId,
-          userId,
+          context.CorrelationId,
+          context.UserId,
           invalidated);
 
       throw new SessionStaleException(sessionId);
@@ -70,8 +71,7 @@ public sealed class ChatApplicationService (
       string sessionId,
       string content,
       Func<string, CancellationToken, Task> onChunkAsync,
-      string? correlationId = null,
-      string? userId = null,
+      ChatRequestContext? requestContext = null,
       CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
@@ -93,6 +93,8 @@ public sealed class ChatApplicationService (
       return false;
     }
 
+    var context = requestContext ?? ChatRequestContext.Empty;
+
     try
     {
       await foreach (var chunk in conversations.StreamMessageAsync(conversationId, content, cancellationToken))
@@ -111,8 +113,8 @@ public sealed class ChatApplicationService (
           "StreamMessage",
           sessionId,
           ex.ConversationId,
-          correlationId,
-          userId,
+          context.CorrelationId,
+          context.UserId,
           invalidated);
 
       throw new SessionStaleException(sessionId);

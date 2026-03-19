@@ -10,8 +10,7 @@ public interface IChatStreamBroker
   Task<ChatStreamStartResult?> StartResponseStreamAsync (
       string sessionId,
       string content,
-      string? correlationId = null,
-      string? userId = null,
+      ChatRequestContext? requestContext = null,
       CancellationToken cancellationToken = default);
 }
 

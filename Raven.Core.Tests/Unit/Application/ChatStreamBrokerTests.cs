@@ -42,8 +42,7 @@ public sealed class ChatStreamBrokerTests
     var stream = await broker.StartResponseStreamAsync(
         "session-1",
         "hello",
-        correlationId: correlationId,
-        userId: "user-1",
+        requestContext: new ChatRequestContext(correlationId, "user-1"),
         cancellationToken: TestContext.Current.CancellationToken);
 
     Assert.NotNull (stream);
@@ -143,8 +142,7 @@ public sealed class ChatStreamBrokerTests
     public Task<string?> SendMessageAsync (
         string sessionId,
         string content,
-        string? correlationId = null,
-        string? userId = null,
+        ChatRequestContext? requestContext = null,
         CancellationToken cancellationToken = default) =>
         Task.FromResult<string?> ("unused");
 
@@ -152,8 +150,7 @@ public sealed class ChatStreamBrokerTests
         string sessionId,
         string content,
         Func<string, CancellationToken, Task> onChunkAsync,
-        string? correlationId = null,
-        string? userId = null,
+        ChatRequestContext? requestContext = null,
         CancellationToken cancellationToken = default)
     {
       if (this.Session is null)
