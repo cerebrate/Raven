@@ -283,6 +283,8 @@ Minimum metadata per memory item:
 - Rejoin support and optional branch/fork sessions.
 - Export/import support.
 - Explicit deletion semantics (soft/hard/delete-older-than-X) and retention policy.
+- **Current restart policy (pre-replay):** invalidate-and-recover for stale `sessionId -> conversationId` mappings.
+- **Planned evolution:** move to replay-based restore when append-only session logs, snapshots, and deterministic replay prerequisites are implemented.
 
 ### Identity and Personalization
 - Structured profile sections: **AGENT**, **SOUL**, **USER**.

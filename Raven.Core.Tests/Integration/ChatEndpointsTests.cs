@@ -1,5 +1,8 @@
 using ArkaneSystems.Raven.Contracts.Chat;
+using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.Tests.Integration.TestHost;
+using ArkaneSystems.Raven.Core.Tests.Integration.TestHost.Fakes;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Json;
 
@@ -7,6 +10,7 @@ namespace ArkaneSystems.Raven.Core.Tests.Integration;
 
 public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClassFixture<RavenCoreWebAppFactory>
 {
+  private readonly RavenCoreWebAppFactory _factory = factory;
   private readonly HttpClient _client = factory.CreateClient();
 
   [Fact]
@@ -137,6 +141,34 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     var getDeletedResponse = await this._client.GetAsync($"/api/chat/sessions/{sessionId}",
       TestContext.Current.CancellationToken);
     Assert.Equal (HttpStatusCode.NotFound, getDeletedResponse.StatusCode);
+  }
+
+  [Fact]
+  public async Task SendMessage_ReturnsConflict_AndInvalidatesSession_ForStaleSession ()
+  {
+    var sessionId = await this.CreateSessionAsync();
+    this.ClearAgentConversations();
+
+    var sendResponse = await this._client.PostAsJsonAsync(
+            $"/api/chat/sessions/{sessionId}/messages",
+            new SendMessageRequest("hello"),
+            TestContext.Current.CancellationToken);
+
+    Assert.Equal (HttpStatusCode.Conflict, sendResponse.StatusCode);
+
+    var error = await sendResponse.Content.ReadFromJsonAsync<ChatErrorResponse>(TestContext.Current.CancellationToken);
+    Assert.NotNull (error);
+    Assert.Equal ("session_stale", error.Code);
+
+    var getResponse = await this._client.GetAsync($"/api/chat/sessions/{sessionId}", TestContext.Current.CancellationToken);
+    Assert.Equal (HttpStatusCode.NotFound, getResponse.StatusCode);
+  }
+
+  private void ClearAgentConversations ()
+  {
+    var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
+    Assert.NotNull (fake);
+    fake.ClearConversations ();
   }
 
   private async Task<string> CreateSessionAsync ()

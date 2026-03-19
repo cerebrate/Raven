@@ -37,7 +37,15 @@ public sealed class ChatApplicationService (
       return null;
     }
 
-    return await conversations.SendMessageAsync(conversationId, content);
+    try
+    {
+      return await conversations.SendMessageAsync(conversationId, content);
+    }
+    catch (ConversationNotFoundException)
+    {
+      _ = await sessions.DeleteSessionAsync(sessionId);
+      throw new SessionStaleException(sessionId);
+    }
   }
 
   // Streams response chunks to the supplied callback to keep transport concerns outside this service.
@@ -66,12 +74,20 @@ public sealed class ChatApplicationService (
       return false;
     }
 
-    await foreach (var chunk in conversations.StreamMessageAsync(conversationId, content, cancellationToken))
+    try
     {
-      await onChunkAsync(chunk, cancellationToken);
-    }
+      await foreach (var chunk in conversations.StreamMessageAsync(conversationId, content, cancellationToken))
+      {
+        await onChunkAsync(chunk, cancellationToken);
+      }
 
-    return true;
+      return true;
+    }
+    catch (ConversationNotFoundException)
+    {
+      _ = await sessions.DeleteSessionAsync(sessionId);
+      throw new SessionStaleException(sessionId);
+    }
   }
 
   // Retrieves session metadata for session inspection APIs.

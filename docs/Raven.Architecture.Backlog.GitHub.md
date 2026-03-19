@@ -109,6 +109,10 @@ Support isolated multi-session behavior with replay, rejoin, retention, and port
 ### Dependencies
 - Epic 1, Epic 2.
 
+### Notes
+- Current policy for restart-time stale `sessionId -> conversationId` mappings is **invalidate-and-recover**.
+- Target future policy is **replay-based restore** after append-only event logs, snapshots, and deterministic replay capabilities are in place.
+
 ---
 
 ## Epic 4 (P1): Short-Term + Long-Term Memory Pipeline

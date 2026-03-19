@@ -18,7 +18,7 @@ public static class ChatEndpoints
     // POST /api/chat/sessions
     // Creates a new conversation with the agent and a matching session record.
     // Returns the sessionId the client should use in all subsequent calls.
-    group.MapPost ("/sessions", async (
+    _ = group.MapPost ("/sessions", async (
         IChatApplicationService chat,
         CancellationToken cancellationToken) =>
     {
@@ -29,17 +29,21 @@ public static class ChatEndpoints
     // POST /api/chat/sessions/{sessionId}/messages
     // Non-streaming variant: waits for the full agent reply before responding.
     // Returns 404 if the sessionId is not recognised.
-    group.MapPost ("/sessions/{sessionId}/messages", async (
+    _ = group.MapPost ("/sessions/{sessionId}/messages", async (
         string sessionId,
         SendMessageRequest request,
         IChatApplicationService chat,
         CancellationToken cancellationToken) =>
     {
-      var reply = await chat.SendMessageAsync(sessionId, request.Content, cancellationToken);
-      if (reply is null)
-        return Results.NotFound ();
-
-      return Results.Ok (new SendMessageResponse (sessionId, reply));
+      try
+      {
+        var reply = await chat.SendMessageAsync(sessionId, request.Content, cancellationToken);
+        return reply is null ? Results.NotFound () : Results.Ok (new SendMessageResponse (sessionId, reply));
+      }
+      catch (SessionStaleException)
+      {
+        return Results.Conflict (new ChatErrorResponse ("session_stale"));
+      }
     });
 
     // POST /api/chat/sessions/{sessionId}/messages/stream
@@ -48,7 +52,7 @@ public static class ChatEndpoints
     // immediately so the client sees text appearing in real time.
     // Response buffering is disabled so bytes are not held by ASP.NET Core's
     // output buffer before being sent to the client.
-    group.MapPost ("/sessions/{sessionId}/messages/stream", async (
+    _ = group.MapPost ("/sessions/{sessionId}/messages/stream", async (
         string sessionId,
         SendMessageRequest request,
         IChatStreamBroker streamBroker,
@@ -69,13 +73,13 @@ public static class ChatEndpoints
 
       http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
       http.Response.ContentType = "text/event-stream";
-      http.Response.Headers["Cache-Control"] = "no-cache";
+      http.Response.Headers.CacheControl = "no-cache";
 
       try
       {
-        await foreach (var streamEventEnvelope in streamHub.ReadAllAsync(stream.ResponseId, cancellationToken))
+        await foreach (var streamEventEnvelope in streamHub.ReadAllAsync (stream.ResponseId, cancellationToken))
         {
-          await WriteSseEventAsync(http.Response, streamEventEnvelope.Event, cancellationToken);
+          await WriteSseEventAsync (http.Response, streamEventEnvelope.Event, cancellationToken);
         }
 
         await stream.Completion;
@@ -90,23 +94,22 @@ public static class ChatEndpoints
     // GET /api/chat/sessions/{sessionId}
     // Returns metadata about an existing session (timestamps).
     // Used by the console client's /history command.
-    group.MapGet ("/sessions/{sessionId}", async (
+    _ = group.MapGet ("/sessions/{sessionId}", async (
         string sessionId,
         IChatApplicationService chat,
         CancellationToken cancellationToken) =>
     {
       var info = await chat.GetSessionAsync(sessionId, cancellationToken);
-      if (info is null)
-        return Results.NotFound ();
-
-      return Results.Ok (new SessionInfoResponse (info.SessionId, info.CreatedAt, info.LastActivityAt));
+      return info is null
+        ? Results.NotFound ()
+        : Results.Ok (new SessionInfoResponse (info.SessionId, info.CreatedAt, info.LastActivityAt));
     });
 
     // DELETE /api/chat/sessions/{sessionId}
     // Removes the session record. Returns 204 No Content on success, 404 if not found.
     // Used by the console client's /new command to clean up the old session before
     // creating a new one.
-    group.MapDelete ("/sessions/{sessionId}", async (
+    _ = group.MapDelete ("/sessions/{sessionId}", async (
         string sessionId,
         IChatApplicationService chat,
         CancellationToken cancellationToken) =>

@@ -14,6 +14,7 @@ The architecture uses a **session-based conversation model** where clients obtai
 - Two implementations: `SqliteSessionStore` (production) and `InMemorySessionStore` (tests)
 - **Key design principle**: Keep session ID stable and abstract across agent infrastructure swaps
 - Workspace stores: `{workspace}/sessions/db/raven.db` (SQLite), `{workspace}/sessions/logs`, `{workspace}/sessions/snapshots`
+- **Architecture decision**: Use invalidate-and-recover now for stale session-to-conversation mappings, with planned evolution to replay-based restore once session log/snapshot replay prerequisites exist.
 
 ### Workspace Path Resolution (Priority Order)
 1. `Raven:Workspace:RootPath` in `appsettings.json`
