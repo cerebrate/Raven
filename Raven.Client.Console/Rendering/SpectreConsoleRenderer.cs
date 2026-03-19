@@ -49,23 +49,23 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.WriteLine ();
   }
 
-  public void WriteUserPrompt ()
-  {
+  public void WriteUserPrompt () =>
     // Markup (not MarkupLine) so the cursor stays on the same line as the prompt.
     AnsiConsole.Markup ("[steelblue1]>[/] ");
-  }
 
-  public void BeginResponse ()
-  {
+  public void BeginResponse () =>
     // Print the "Raven: " label; the streaming chunks follow on the same line.
     AnsiConsole.Markup ("[steelblue1_1]Raven:[/] ");
-  }
 
   public void WriteChunk (string chunk)
   {
-    // AnsiConsole.Write (not MarkupLine) — chunks are plain text, not markup,
-    // so we do not attempt to interpret square brackets in the agent's reply.
-    AnsiConsole.Write (chunk);
+    if (string.IsNullOrEmpty (chunk))
+      return;
+
+    // Streamed model output is untrusted plain text and may contain characters
+    // that look like Spectre markup (for example JSON arrays/objects). Render as
+    // literal text so markup parsing never interrupts the stream.
+    AnsiConsole.Write (new Text (chunk));
   }
 
   public void EndResponse ()

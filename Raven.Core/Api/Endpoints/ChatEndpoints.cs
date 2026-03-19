@@ -71,12 +71,20 @@ public static class ChatEndpoints
       http.Response.ContentType = "text/event-stream";
       http.Response.Headers["Cache-Control"] = "no-cache";
 
-      await foreach (var streamEventEnvelope in streamHub.ReadAllAsync(stream.ResponseId, cancellationToken))
+      try
       {
-        await WriteSseEventAsync(http.Response, streamEventEnvelope.Event, cancellationToken);
-      }
+        await foreach (var streamEventEnvelope in streamHub.ReadAllAsync(stream.ResponseId, cancellationToken))
+        {
+          await WriteSseEventAsync(http.Response, streamEventEnvelope.Event, cancellationToken);
+        }
 
-      await stream.Completion;
+        await stream.Completion;
+      }
+      catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+      {
+        // Client disconnects/timeouts are expected for long-lived SSE requests.
+        // Treat request-abort cancellation as a graceful stream shutdown.
+      }
     });
 
     // GET /api/chat/sessions/{sessionId}
