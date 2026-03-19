@@ -20,14 +20,10 @@ public interface IConsoleRenderer
   // Write the prompt character(s) that precede user input (no newline).
   void WriteUserPrompt ();
 
-  // Write the agent label before streaming begins (no newline).
-  void BeginResponse ();
-
-  // Write one streamed text chunk inline — called repeatedly as chunks arrive.
-  void WriteChunk (string chunk);
-
-  // Finalise the response (newline, spacing) after all chunks have been written.
-  void EndResponse ();
+  // Render a streaming agent response as Markdown inside a Live display region.
+  // Accumulates chunks as they arrive, re-rendering the Markdown on each update,
+  // and stops the Live region once the stream is exhausted.
+  Task RenderResponseStreamAsync (IAsyncEnumerable<string> chunks, CancellationToken cancellationToken = default);
 
   // Display an error message.
   void ShowError (string message);

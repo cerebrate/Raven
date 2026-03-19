@@ -76,19 +76,17 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         continue;
       }
 
-      // Any other input is treated as a chat message. Stream the agent's
-      // reply back and write each chunk as it arrives so the user sees
-      // the response building up in real time.
+      // Any other input is treated as a chat message. The renderer owns the full
+      // response lifecycle: it streams chunks, accumulates them, and re-renders
+      // the growing Markdown inside a Live region on each update.
       try
       {
-        renderer.BeginResponse ();
-        await foreach (var chunk in client.StreamMessageAsync (state.SessionId, input, cancellationToken))
-          renderer.WriteChunk (chunk);
-        renderer.EndResponse ();
+        await renderer.RenderResponseStreamAsync (
+            client.StreamMessageAsync (state.SessionId, input, cancellationToken),
+            cancellationToken);
       }
       catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
       {
-        renderer.EndResponse ();
         renderer.ShowWarning ("The current session is stale and can no longer be used.");
         renderer.ShowStaleSessionRecoveryPrompt ();
 

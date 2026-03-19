@@ -53,26 +53,52 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     // Markup (not MarkupLine) so the cursor stays on the same line as the prompt.
     AnsiConsole.Markup ("[steelblue1]>[/] ");
 
-  public void BeginResponse () =>
-    // Print the "Raven: " label; the streaming chunks follow on the same line.
-    AnsiConsole.Markup ("[steelblue1_1]Raven:[/] ");
-
-  public void WriteChunk (string chunk)
+  // Render the streaming agent response using a two-phase approach:
+  //
+  // Phase 1 (streaming): consume the chunk stream silently while showing a
+  // single-line spinner via AnsiConsole.Status. Status is designed exactly
+  // for this — a fixed-height, single-line live region. It never touches the
+  // scroll buffer above it, so there is no cursor-position corruption.
+  //
+  // Phase 2 (final): once the stream ends Status cleans up its own line, and
+  // we write the complete accumulated text as formatted Markdown once into the
+  // scroll buffer using AnsiConsole.Write.
+  //
+  // This replaces the previous plain-text-then-erase approach, which was
+  // unreliable because accurate line counting requires knowing the true
+  // terminal display width (affected by Unicode character widths, ConPTY
+  // quirks, and window resize during streaming).
+  public async Task RenderResponseStreamAsync (
+      IAsyncEnumerable<string> chunks,
+      CancellationToken cancellationToken = default)
   {
-    if (string.IsNullOrEmpty (chunk))
-      return;
+    AnsiConsole.MarkupLine ("[steelblue1_1]Raven:[/]");
 
-    // Streamed model output is untrusted plain text and may contain characters
-    // that look like Spectre markup (for example JSON arrays/objects). Render as
-    // literal text so markup parsing never interrupts the stream.
-    AnsiConsole.Write (new Text (chunk));
-  }
+    var accumulated = new System.Text.StringBuilder ();
 
-  public void EndResponse ()
-  {
-    // Two newlines: one to end the response line, one to add visual spacing
-    // before the next prompt.
-    AnsiConsole.WriteLine ();
+    // Phase 1: accumulate chunks behind a spinner.
+    await AnsiConsole.Status ()
+        .Spinner (Spinner.Known.Dots)
+        .SpinnerStyle (Style.Parse ("steelblue1_1 dim"))
+        .StartAsync ("[dim]thinking…[/]", async ctx =>
+        {
+          await foreach (var chunk in chunks.WithCancellation (cancellationToken))
+          {
+            accumulated.Append (chunk);
+
+            // Show the last ~60 chars of accumulated text as a live status
+            // message so the user can see progress without scroll corruption.
+            var preview = accumulated.ToString ();
+            var start   = Math.Max (0, preview.Length - 60);
+            var tail    = Markup.Escape (preview[start..].ReplaceLineEndings (" "));
+            ctx.Status ($"[dim]{tail}[/]");
+          }
+        });
+
+    // Phase 2: write the final formatted Markdown into the scroll buffer.
+    if (accumulated.Length > 0)
+      AnsiConsole.Write (MarkdownToSpectreRenderer.Render (accumulated.ToString ()));
+
     AnsiConsole.WriteLine ();
   }
 
