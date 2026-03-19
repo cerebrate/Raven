@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Contracts.Chat;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
+using ArkaneSystems.Raven.Core.Bus.Dispatch;
 using Microsoft.AspNetCore.Http.Features;
 
 namespace ArkaneSystems.Raven.Core.Api.Endpoints;
@@ -51,32 +52,31 @@ public static class ChatEndpoints
         string sessionId,
         SendMessageRequest request,
         IChatStreamBroker streamBroker,
+        IResponseStreamEventHub streamHub,
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
-      var startedResponse = false;
-
-      var sessionExists = await streamBroker.StreamResponseEventsAsync(
+      var stream = await streamBroker.StartResponseStreamAsync(
           sessionId,
           request.Content,
-          async (streamEventEnvelope, ct) =>
-          {
-            if (!startedResponse)
-            {
-              http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
-              http.Response.ContentType = "text/event-stream";
-              http.Response.Headers["Cache-Control"] = "no-cache";
-              startedResponse = true;
-            }
-
-            await WriteSseEventAsync(http.Response, streamEventEnvelope.Event, ct);
-          },
           cancellationToken: cancellationToken);
 
-      if (!sessionExists)
+      if (stream is null)
       {
         http.Response.StatusCode = 404;
+        return;
       }
+
+      http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
+      http.Response.ContentType = "text/event-stream";
+      http.Response.Headers["Cache-Control"] = "no-cache";
+
+      await foreach (var streamEventEnvelope in streamHub.ReadAllAsync(stream.ResponseId, cancellationToken))
+      {
+        await WriteSseEventAsync(http.Response, streamEventEnvelope.Event, cancellationToken);
+      }
+
+      await stream.Completion;
     });
 
     // GET /api/chat/sessions/{sessionId}

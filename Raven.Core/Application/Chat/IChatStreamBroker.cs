@@ -5,12 +5,16 @@ namespace ArkaneSystems.Raven.Core.Application.Chat;
 // Bridges chat message streaming into structured response events.
 public interface IChatStreamBroker
 {
-  // Emits ordered response events for a session message stream.
-  // Returns false when the session is unknown.
-  Task<bool> StreamResponseEventsAsync (
+  // Starts publishing ordered response events for a session message stream.
+  // Returns null when the session is unknown.
+  Task<ChatStreamStartResult?> StartResponseStreamAsync (
       string sessionId,
       string content,
-      Func<ResponseStreamEventEnvelope, CancellationToken, Task> onEventAsync,
       string? userId = null,
       CancellationToken cancellationToken = default);
 }
+
+// Metadata returned when a stream starts successfully.
+public sealed record ChatStreamStartResult(
+    string ResponseId,
+    Task Completion);

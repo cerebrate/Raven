@@ -1,58 +1,73 @@
+using System.Text;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
-using System.Text;
 
 namespace ArkaneSystems.Raven.Core.Application.Chat;
 
 public sealed class ChatStreamBroker (
     IChatApplicationService chat,
     IMessageBus messageBus,
+    IResponseStreamEventHub streamHub,
     ILogger<ChatStreamBroker> logger) : IChatStreamBroker
 {
-  public async Task<bool> StreamResponseEventsAsync (
+  public async Task<ChatStreamStartResult?> StartResponseStreamAsync (
       string sessionId,
       string content,
-      Func<ResponseStreamEventEnvelope, CancellationToken, Task> onEventAsync,
       string? userId = null,
       CancellationToken cancellationToken = default)
   {
-    if (string.IsNullOrWhiteSpace (sessionId))
+    if (string.IsNullOrWhiteSpace(sessionId))
     {
-      throw new ArgumentException ("Session ID cannot be empty.", nameof (sessionId));
+      throw new ArgumentException("Session ID cannot be empty.", nameof(sessionId));
     }
 
-    if (string.IsNullOrWhiteSpace (content))
+    if (string.IsNullOrWhiteSpace(content))
     {
-      throw new ArgumentException ("Message content cannot be empty.", nameof (content));
+      throw new ArgumentException("Message content cannot be empty.", nameof(content));
     }
 
-    ArgumentNullException.ThrowIfNull (onEventAsync);
-    cancellationToken.ThrowIfCancellationRequested ();
+    cancellationToken.ThrowIfCancellationRequested();
 
     var session = await chat.GetSessionAsync(sessionId, cancellationToken);
     if (session is null)
     {
-      return false;
+      return null;
     }
 
     var responseId = Guid.NewGuid().ToString();
+    if (!streamHub.TryCreateStream(responseId))
+    {
+      throw new InvalidOperationException($"Response stream '{responseId}' already exists.");
+    }
+
+    var completion = PublishStreamAsync(responseId, sessionId, content, userId, cancellationToken);
+    return new ChatStreamStartResult(responseId, completion);
+  }
+
+  private async Task PublishStreamAsync (
+      string responseId,
+      string sessionId,
+      string content,
+      string? userId,
+      CancellationToken cancellationToken)
+  {
     var correlationId = Guid.NewGuid().ToString();
     var responseContent = new StringBuilder();
     var sequence = 0;
-
-    await this.EmitEventAsync (
-        CreateEnvelope (
-            type: "chat.response.started.v1",
-            sessionId: sessionId,
-            userId: userId,
-            correlationId: correlationId,
-            causationId: null,
-            streamEvent: new ResponseStarted (responseId, DateTimeOffset.UtcNow)),
-        onEventAsync,
-        cancellationToken);
+    var terminalPublished = false;
 
     try
     {
+      await PublishEventAsync(
+          CreateEnvelope(
+              type: "chat.response.started.v1",
+              sessionId: sessionId,
+              userId: userId,
+              correlationId: correlationId,
+              causationId: null,
+              streamEvent: new ResponseStarted(responseId, DateTimeOffset.UtcNow)),
+          cancellationToken);
+
       var streamed = await chat.StreamMessageAsync(
           sessionId,
           content,
@@ -61,7 +76,7 @@ public sealed class ChatStreamBroker (
             sequence++;
             _ = responseContent.Append(chunk);
 
-            await this.EmitEventAsync(
+            await PublishEventAsync(
                 CreateEnvelope(
                     type: "chat.response.delta.v1",
                     sessionId: sessionId,
@@ -69,39 +84,37 @@ public sealed class ChatStreamBroker (
                     correlationId: correlationId,
                     causationId: null,
                     streamEvent: new ResponseDelta(responseId, sequence, chunk, DateTimeOffset.UtcNow)),
-                onEventAsync,
                 ct);
           },
           cancellationToken);
 
       if (!streamed)
       {
-        await this.EmitEventAsync (
-            CreateEnvelope (
+        await PublishEventAsync(
+            CreateEnvelope(
                 type: "chat.response.failed.v1",
                 sessionId: sessionId,
                 userId: userId,
                 correlationId: correlationId,
                 causationId: null,
-                streamEvent: new ResponseFailed (responseId, "Session became unavailable before streaming completed.", DateTimeOffset.UtcNow, ErrorCode: "session_not_found", IsRetryable: false)),
-            onEventAsync,
+                streamEvent: new ResponseFailed(responseId, "Session became unavailable before streaming completed.", DateTimeOffset.UtcNow, ErrorCode: "session_not_found", IsRetryable: false)),
             cancellationToken);
 
-        return true;
+        terminalPublished = true;
+        return;
       }
 
-      await this.EmitEventAsync (
-          CreateEnvelope (
+      await PublishEventAsync(
+          CreateEnvelope(
               type: "chat.response.completed.v1",
               sessionId: sessionId,
               userId: userId,
               correlationId: correlationId,
               causationId: null,
-              streamEvent: new ResponseCompleted (responseId, DateTimeOffset.UtcNow, responseContent.ToString ())),
-          onEventAsync,
+              streamEvent: new ResponseCompleted(responseId, DateTimeOffset.UtcNow, responseContent.ToString())),
           cancellationToken);
 
-      return true;
+      terminalPublished = true;
     }
     catch (OperationCanceledException)
     {
@@ -111,34 +124,31 @@ public sealed class ChatStreamBroker (
     {
       // If the backing conversation mapping is missing, surface as stream failure
       // event without failing the HTTP pipeline after streaming has started.
-      logger.LogWarning (ex, "Streaming failed for session {SessionId}", sessionId);
+      logger.LogWarning(ex, "Streaming failed for session {SessionId}", sessionId);
 
-      await this.EmitEventAsync (
-          CreateEnvelope (
+      await PublishEventAsync(
+          CreateEnvelope(
               type: "chat.response.failed.v1",
               sessionId: sessionId,
               userId: userId,
               correlationId: correlationId,
               causationId: null,
-              streamEvent: new ResponseFailed (responseId, ex.Message, DateTimeOffset.UtcNow, ErrorCode: "conversation_not_found", IsRetryable: false)),
-          onEventAsync,
+              streamEvent: new ResponseFailed(responseId, ex.Message, DateTimeOffset.UtcNow, ErrorCode: "conversation_not_found", IsRetryable: false)),
           cancellationToken);
 
-      return true;
+      terminalPublished = true;
+    }
+    finally
+    {
+      if (!terminalPublished)
+      {
+        streamHub.Complete(responseId);
+      }
     }
   }
 
-  private async Task EmitEventAsync (
-      ResponseStreamEventEnvelope eventEnvelope,
-      Func<ResponseStreamEventEnvelope, CancellationToken, Task> onEventAsync,
-      CancellationToken cancellationToken)
-  {
-    await messageBus.PublishAsync (
-        new MessageEnvelope<ResponseStreamEventEnvelope> (eventEnvelope.Metadata, eventEnvelope),
-        cancellationToken);
-
-    await onEventAsync (eventEnvelope, cancellationToken);
-  }
+  private Task PublishEventAsync (ResponseStreamEventEnvelope eventEnvelope, CancellationToken cancellationToken) =>
+      messageBus.PublishAsync(new MessageEnvelope<ResponseStreamEventEnvelope>(eventEnvelope.Metadata, eventEnvelope), cancellationToken);
 
   private static ResponseStreamEventEnvelope CreateEnvelope (
       string type,
@@ -157,6 +167,6 @@ public sealed class ChatStreamBroker (
         priority: MessagePriority.Normal,
         createdAtUtc: DateTimeOffset.UtcNow);
 
-    return new ResponseStreamEventEnvelope (metadata, streamEvent);
+    return new ResponseStreamEventEnvelope(metadata, streamEvent);
   }
 }
