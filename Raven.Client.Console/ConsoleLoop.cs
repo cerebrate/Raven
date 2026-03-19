@@ -77,8 +77,8 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       }
 
       // Any other input is treated as a chat message. The renderer owns the full
-      // response lifecycle: it streams chunks, accumulates them, and re-renders
-      // the growing Markdown inside a Live region on each update.
+      // response lifecycle: it streams chunks, accumulates them while showing
+      // status/progress during streaming, then renders the full Markdown response once.
       try
       {
         await renderer.RenderResponseStreamAsync (
