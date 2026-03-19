@@ -16,8 +16,22 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.SetMinimumLevel (LogLevel.Warning);
 
 var ravenCoreBaseUrl = builder.Configuration["RavenCore:BaseUrl"];
-var ravenCoreBaseUri = new Uri (ravenCoreBaseUrl);
 
+// Use a sensible default if the configuration value is missing, and validate any explicit value.
+// This avoids unhelpful ArgumentNullException/UriFormatException on startup when the setting
+// is absent or malformed, while still failing fast for bad explicit configuration.
+const string defaultRavenCoreBaseUrl = "http://localhost:5269";
+
+Uri ravenCoreBaseUri;
+if (string.IsNullOrWhiteSpace (ravenCoreBaseUrl))
+{
+  ravenCoreBaseUri = new Uri (defaultRavenCoreBaseUrl, UriKind.Absolute);
+}
+else if (!Uri.TryCreate (ravenCoreBaseUrl, UriKind.Absolute, out ravenCoreBaseUri))
+{
+  throw new InvalidOperationException (
+      $"Configuration value 'RavenCore:BaseUrl' is not a valid absolute URI: '{ravenCoreBaseUrl}'.");
+}
 // Typed HttpClient: the HttpClient instance is configured with the base URL
 // from appsettings.json ("RavenCore:BaseUrl") and injected directly into
 // RavenApiClient via its constructor. The IHttpClientFactory manages pooling.
