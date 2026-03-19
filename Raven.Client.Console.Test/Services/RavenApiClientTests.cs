@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 
-namespace ArkaneSystems.Raven.Client.Console.Test;
+namespace ArkaneSystems.Raven.Client.Console.Test.Services;
 
 public sealed class RavenApiClientTests
 {
