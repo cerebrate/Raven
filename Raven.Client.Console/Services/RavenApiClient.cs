@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ArkaneSystems.Raven.Contracts.Chat;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
@@ -75,6 +76,19 @@ public class RavenApiClient (HttpClient http)
       }
       else if (string.Equals(eventName, "failed", StringComparison.OrdinalIgnoreCase))
       {
+        if (TryParseFailurePayload(payload, out var failureData))
+        {
+          var message = string.IsNullOrWhiteSpace(failureData.Message)
+            ? "Streaming failed."
+            : failureData.Message;
+
+          var codePrefix = string.IsNullOrWhiteSpace(failureData.Code)
+            ? string.Empty
+            : $"[{failureData.Code}] ";
+
+          throw new InvalidOperationException(codePrefix + message);
+        }
+
         throw new InvalidOperationException(string.IsNullOrWhiteSpace(payload) ? "Streaming failed." : payload);
       }
 
@@ -148,5 +162,31 @@ public class RavenApiClient (HttpClient http)
   {
     var response = await http.DeleteAsync($"/api/chat/sessions/{sessionId}");
     _ = response.EnsureSuccessStatusCode ();
+  }
+
+  private static bool TryParseFailurePayload (string payload, out StreamFailureEventData failureData)
+  {
+    failureData = new StreamFailureEventData("", null, false);
+
+    if (string.IsNullOrWhiteSpace(payload))
+    {
+      return false;
+    }
+
+    try
+    {
+      var parsed = JsonSerializer.Deserialize<StreamFailureEventData>(payload);
+      if (parsed is null)
+      {
+        return false;
+      }
+
+      failureData = parsed;
+      return true;
+    }
+    catch (JsonException)
+    {
+      return false;
+    }
   }
 }

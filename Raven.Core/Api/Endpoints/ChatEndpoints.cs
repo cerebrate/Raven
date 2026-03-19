@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ArkaneSystems.Raven.Contracts.Chat;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
@@ -131,7 +132,11 @@ public static class ChatEndpoints
       ResponseStarted started => ("started", started.ResponseId),
       ResponseDelta delta => ("delta", delta.Content),
       ResponseCompleted completed => ("completed", completed.FinalContent ?? string.Empty),
-      ResponseFailed failed => ("failed", failed.ErrorMessage),
+      ResponseFailed failed =>
+      (
+        "failed",
+        JsonSerializer.Serialize(new StreamFailureEventData(failed.ErrorMessage, failed.ErrorCode, failed.IsRetryable))
+      ),
       _ => ("unknown", string.Empty)
     };
 

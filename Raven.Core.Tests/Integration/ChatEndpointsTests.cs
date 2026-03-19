@@ -164,6 +164,24 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     Assert.Equal (HttpStatusCode.NotFound, getResponse.StatusCode);
   }
 
+  [Fact]
+  public async Task StreamMessage_ReturnsFailedEventPayload_WithSessionStaleCode_ForStaleSession ()
+  {
+    var sessionId = await this.CreateSessionAsync();
+    this.ClearAgentConversations();
+
+    var response = await this._client.PostAsJsonAsync(
+            $"/api/chat/sessions/{sessionId}/messages/stream",
+            new SendMessageRequest("hello"),
+            TestContext.Current.CancellationToken);
+
+    Assert.Equal (HttpStatusCode.OK, response.StatusCode);
+
+    var streamPayload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+    Assert.Contains ("event: failed", streamPayload, StringComparison.Ordinal);
+    Assert.Contains ("\"Code\":\"session_stale\"", streamPayload, StringComparison.Ordinal);
+  }
+
   private void ClearAgentConversations ()
   {
     var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
