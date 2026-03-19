@@ -1,11 +1,13 @@
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.Application.Sessions;
+using Microsoft.Extensions.Logging;
 
 namespace ArkaneSystems.Raven.Core.Application.Chat;
 
 public sealed class ChatApplicationService (
     IAgentConversationService conversations,
-    ISessionStore sessions) : IChatApplicationService
+    ISessionStore sessions,
+    ILogger<ChatApplicationService> logger) : IChatApplicationService
 {
   // Creates both sides of the session mapping so clients only work with Raven session IDs.
   public async Task<string> CreateSessionAsync (CancellationToken cancellationToken = default)
@@ -41,9 +43,17 @@ public sealed class ChatApplicationService (
     {
       return await conversations.SendMessageAsync(conversationId, content);
     }
-    catch (ConversationNotFoundException)
+    catch (ConversationNotFoundException ex)
     {
-      _ = await sessions.DeleteSessionAsync(sessionId);
+      var invalidated = await sessions.DeleteSessionAsync(sessionId);
+
+      logger.LogWarning(
+          "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, Invalidated: {Invalidated}",
+          "SendMessage",
+          sessionId,
+          ex.ConversationId,
+          invalidated);
+
       throw new SessionStaleException(sessionId);
     }
   }
@@ -83,9 +93,17 @@ public sealed class ChatApplicationService (
 
       return true;
     }
-    catch (ConversationNotFoundException)
+    catch (ConversationNotFoundException ex)
     {
-      _ = await sessions.DeleteSessionAsync(sessionId);
+      var invalidated = await sessions.DeleteSessionAsync(sessionId);
+
+      logger.LogWarning(
+          "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, Invalidated: {Invalidated}",
+          "StreamMessage",
+          sessionId,
+          ex.ConversationId,
+          invalidated);
+
       throw new SessionStaleException(sessionId);
     }
   }
