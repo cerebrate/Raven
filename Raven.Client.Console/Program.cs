@@ -15,11 +15,14 @@ var builder = Host.CreateApplicationBuilder(args);
 // via IConsoleRenderer.ShowError, not the logger.
 builder.Logging.SetMinimumLevel (LogLevel.Warning);
 
+var ravenCoreBaseUrl = builder.Configuration["RavenCore:BaseUrl"];
+var ravenCoreBaseUri = new Uri (ravenCoreBaseUrl);
+
 // Typed HttpClient: the HttpClient instance is configured with the base URL
 // from appsettings.json ("RavenCore:BaseUrl") and injected directly into
 // RavenApiClient via its constructor. The IHttpClientFactory manages pooling.
 builder.Services.AddHttpClient<RavenApiClient> (client =>
-    client.BaseAddress = new Uri (builder.Configuration["RavenCore:BaseUrl"] ?? "http://localhost:5269"));
+    client.BaseAddress = ravenCoreBaseUri);
 
 // SessionState holds the currently active session ID and is shared between
 // RavenApiClient calls and ConsoleLoop. Singleton so the same instance is
@@ -36,6 +39,51 @@ builder.Services.AddTransient<ConsoleLoop> ();
 
 var host = builder.Build();
 
+// Wait for Raven.Core to report healthy instead of relying on a fixed startup delay.
+await WaitForRavenCoreReadyAsync (ravenCoreBaseUri);
+
 // Resolve and run the REPL loop directly — no hosted service wrapper needed
 // because this is a single-purpose foreground process.
 await host.Services.GetRequiredService<ConsoleLoop> ().RunAsync ();
+
+static async Task WaitForRavenCoreReadyAsync (Uri baseAddress, CancellationToken cancellationToken = default)
+{
+  var overallTimeout = TimeSpan.FromSeconds (30);
+  var probeInterval = TimeSpan.FromMilliseconds (500);
+  var perRequestTimeout = TimeSpan.FromSeconds (2);
+
+  using var http = new HttpClient { BaseAddress = baseAddress };
+
+  Exception? lastFailure = null;
+  var deadline = DateTimeOffset.UtcNow + overallTimeout;
+
+  while (DateTimeOffset.UtcNow < deadline)
+  {
+    cancellationToken.ThrowIfCancellationRequested ();
+
+    using var probeCts = CancellationTokenSource.CreateLinkedTokenSource (cancellationToken);
+    probeCts.CancelAfter (perRequestTimeout);
+
+    try
+    {
+      using var response = await http.GetAsync ("/health", probeCts.Token);
+      if (response.IsSuccessStatusCode)
+      {
+        return;
+      }
+
+      lastFailure = new HttpRequestException (
+          $"Health probe returned unexpected status code {(int)response.StatusCode} ({response.StatusCode}).");
+    }
+    catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException)
+    {
+      lastFailure = ex;
+    }
+
+    await Task.Delay (probeInterval, cancellationToken);
+  }
+
+  throw new InvalidOperationException (
+      $"Raven.Core at '{baseAddress}' was not ready within {overallTimeout.TotalSeconds:0} seconds.",
+      lastFailure);
+}
