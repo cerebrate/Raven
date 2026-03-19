@@ -84,6 +84,17 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.WriteLine ();
   }
 
+  public void ShowWarning (string message)
+  {
+    AnsiConsole.MarkupLine ($"[yellow]Warning:[/] {Markup.Escape (message)}");
+    AnsiConsole.WriteLine ();
+  }
+
+  public void ShowStaleSessionRecoveryPrompt ()
+  {
+    AnsiConsole.MarkupLine ("[grey]Press Enter to create a new session and continue.[/]");
+  }
+
   public void ShowGoodbye ()
   {
     AnsiConsole.WriteLine ();

@@ -44,8 +44,14 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       {
         var oldSessionId = state.SessionId;
         try
-        { await client.DeleteSessionAsync (oldSessionId); }
-        catch { /* best-effort */ }
+        {
+          await client.DeleteSessionAsync (oldSessionId);
+        }
+        catch
+        {
+          // best-effort
+        }
+
         state.SessionId = await client.CreateSessionAsync ();
         renderer.ShowNewSession (oldSessionId, state.SessionId);
         continue;
@@ -66,6 +72,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         {
           renderer.ShowError (ex.Message);
         }
+
         continue;
       }
 
@@ -78,6 +85,18 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         await foreach (var chunk in client.StreamMessageAsync (state.SessionId, input, cancellationToken))
           renderer.WriteChunk (chunk);
         renderer.EndResponse ();
+      }
+      catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
+      {
+        renderer.EndResponse ();
+        renderer.ShowWarning ("The current session is stale and can no longer be used.");
+        renderer.ShowStaleSessionRecoveryPrompt ();
+
+        _ = System.Console.ReadLine();
+
+        var oldSessionId = state.SessionId;
+        state.SessionId = await client.CreateSessionAsync ();
+        renderer.ShowNewSession (oldSessionId, state.SessionId);
       }
       catch (Exception ex)
       {

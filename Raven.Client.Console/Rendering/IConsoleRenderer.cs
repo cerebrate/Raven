@@ -32,6 +32,12 @@ public interface IConsoleRenderer
   // Display an error message.
   void ShowError (string message);
 
+  // Display a warning message.
+  void ShowWarning (string message);
+
+  // Prompt shown when stale-session recovery requires creating a new session.
+  void ShowStaleSessionRecoveryPrompt ();
+
   // Display the farewell message when the user exits.
   void ShowGoodbye ();
 

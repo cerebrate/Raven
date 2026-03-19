@@ -82,14 +82,13 @@ public class RavenApiClient (HttpClient http)
             ? "Streaming failed."
             : failureData.Message;
 
-          var codePrefix = string.IsNullOrWhiteSpace(failureData.Code)
-            ? string.Empty
-            : $"[{failureData.Code}] ";
-
-          throw new InvalidOperationException(codePrefix + message);
+          throw new StreamEventFailedException(message, failureData.Code, failureData.IsRetryable);
         }
 
-        throw new InvalidOperationException(string.IsNullOrWhiteSpace(payload) ? "Streaming failed." : payload);
+        throw new StreamEventFailedException(
+            string.IsNullOrWhiteSpace(payload) ? "Streaming failed." : payload,
+            code: null,
+            isRetryable: false);
       }
 
       await Task.CompletedTask;

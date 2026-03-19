@@ -450,3 +450,6 @@ This creates a sustainable feedback loop:
 4. **Project evolves** → Instructions stay current and guide new work
 
 **Goal**: Make `.github/copilot-instructions.md` the canonical reference for how Raven is built and why—a resource that no human maintainer has to maintain alone.
+
+### Console Client Behavior
+- On stale session notifications, warn the user and prompt before creating a replacement session instead of auto-recovering silently.
