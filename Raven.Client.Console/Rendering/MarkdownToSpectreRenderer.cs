@@ -8,9 +8,9 @@ using System.Text;
 namespace ArkaneSystems.Raven.Client.Console.Rendering;
 
 // Converts a Markdown string to a Spectre.Console IRenderable.
-// Used by SpectreConsoleRenderer to display agent responses with live formatting
-// as chunks stream in. Called on every chunk, so the full document is re-parsed
-// and re-rendered each time — acceptable for typical LLM response sizes.
+// Used by SpectreConsoleRenderer to display agent responses with Markdown-based
+// formatting after the full response has been received from the stream.
+// The entire document is parsed and rendered once per completed agent response.
 //
 // Block mapping:
 //   HeadingBlock       → Markup with [bold] / [underline] styles by level
