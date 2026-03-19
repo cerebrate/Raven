@@ -55,23 +55,75 @@ public class RavenApiClient (HttpClient http)
     using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
     using var reader = new StreamReader(stream);
 
+    var eventName = "delta"; // default keeps compatibility with legacy data-only SSE frames.
+    var data = new System.Text.StringBuilder();
+
+    async IAsyncEnumerable<string> FlushFrameAsync ([EnumeratorCancellation] CancellationToken ct)
+    {
+      if (data.Length == 0)
+      {
+        yield break;
+      }
+
+      var payload = data.ToString();
+
+      if (string.Equals(eventName, "delta", StringComparison.OrdinalIgnoreCase))
+      {
+        if (!string.IsNullOrEmpty(payload))
+          yield return payload;
+      }
+      else if (string.Equals(eventName, "failed", StringComparison.OrdinalIgnoreCase))
+      {
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(payload) ? "Streaming failed." : payload);
+      }
+
+      await Task.CompletedTask;
+    }
+
     while (!cancellationToken.IsCancellationRequested)
     {
       var line = await reader.ReadLineAsync(cancellationToken);
-
       if (line is null)
         break;
 
-      // SSE lines look like: "data: <text>"
-      // Skip blank lines, comment lines, and any other non-data frames.
-      if (!line.StartsWith ("data: ", StringComparison.Ordinal))
+      // Blank line terminates one SSE event frame.
+      if (line.Length == 0)
+      {
+        await foreach (var chunk in FlushFrameAsync(cancellationToken))
+          yield return chunk;
+
+        eventName = "delta";
+        _ = data.Clear();
+        continue;
+      }
+
+      if (line.StartsWith (":", StringComparison.Ordinal))
         continue;
 
-      // Strip the "data: " prefix and yield the payload to the caller.
-      var chunk = line["data: ".Length..];
-      if (!string.IsNullOrEmpty (chunk))
-        yield return chunk;
+      if (line.StartsWith ("event:", StringComparison.Ordinal))
+      {
+        eventName = line["event:".Length..].Trim();
+        continue;
+      }
+
+      if (line.StartsWith ("data:", StringComparison.Ordinal))
+      {
+        var segment = line["data:".Length..];
+        if (segment.StartsWith (" ", StringComparison.Ordinal))
+        {
+          segment = segment[1..];
+        }
+
+        if (data.Length > 0)
+          _ = data.Append ('\n');
+
+        _ = data.Append (segment);
+      }
     }
+
+    // Handle a final frame if the stream ends without a trailing blank line.
+    await foreach (var chunk in FlushFrameAsync(cancellationToken))
+      yield return chunk;
   }
 
   // GET /api/chat/sessions/{sessionId} — fetch session metadata.

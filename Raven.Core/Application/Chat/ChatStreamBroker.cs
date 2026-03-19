@@ -140,6 +140,10 @@ public sealed class ChatStreamBroker (
     }
     finally
     {
+      // Only force-complete when no terminal event was published (for example,
+      // cancellation before completed/failed could be enqueued). When a terminal
+      // event is published, ResponseStreamEventForwardingHandler completes the stream
+      // after forwarding that terminal event to subscribers.
       if (!terminalPublished)
       {
         streamHub.Complete(responseId);
