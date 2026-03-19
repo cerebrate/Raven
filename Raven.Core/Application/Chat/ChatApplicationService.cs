@@ -19,7 +19,12 @@ public sealed class ChatApplicationService (
   }
 
   // Resolves the session before sending to the agent so unknown sessions map to a null result.
-  public async Task<string?> SendMessageAsync (string sessionId, string content, CancellationToken cancellationToken = default)
+  public async Task<string?> SendMessageAsync (
+      string sessionId,
+      string content,
+      string? correlationId = null,
+      string? userId = null,
+      CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
     {
@@ -48,10 +53,12 @@ public sealed class ChatApplicationService (
       var invalidated = await sessions.DeleteSessionAsync(sessionId);
 
       logger.LogWarning(
-          "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, Invalidated: {Invalidated}",
+          "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, CorrelationId: {CorrelationId}, UserId: {UserId}, Invalidated: {Invalidated}",
           "SendMessage",
           sessionId,
           ex.ConversationId,
+          correlationId,
+          userId,
           invalidated);
 
       throw new SessionStaleException(sessionId);
@@ -63,6 +70,8 @@ public sealed class ChatApplicationService (
       string sessionId,
       string content,
       Func<string, CancellationToken, Task> onChunkAsync,
+      string? correlationId = null,
+      string? userId = null,
       CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
@@ -98,10 +107,12 @@ public sealed class ChatApplicationService (
       var invalidated = await sessions.DeleteSessionAsync(sessionId);
 
       logger.LogWarning(
-          "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, Invalidated: {Invalidated}",
+          "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, CorrelationId: {CorrelationId}, UserId: {UserId}, Invalidated: {Invalidated}",
           "StreamMessage",
           sessionId,
           ex.ConversationId,
+          correlationId,
+          userId,
           invalidated);
 
       throw new SessionStaleException(sessionId);

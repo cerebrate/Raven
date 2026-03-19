@@ -13,6 +13,7 @@ namespace ArkaneSystems.Raven.Core.Api.Endpoints;
 public static class ChatEndpoints
 {
   private const string CorrelationHeaderName = "X-Correlation-Id";
+  private const string CorrelationItemKey = "Raven.CorrelationId";
 
   public static IEndpointRouteBuilder MapChatEndpoints (this IEndpointRouteBuilder app)
   {
@@ -37,11 +38,20 @@ public static class ChatEndpoints
         string sessionId,
         SendMessageRequest request,
         IChatApplicationService chat,
+        HttpContext http,
         CancellationToken cancellationToken) =>
     {
+      var correlationId = ResolveCorrelationId(http);
+
       try
       {
-        var reply = await chat.SendMessageAsync(sessionId, request.Content, cancellationToken);
+        var reply = await chat.SendMessageAsync(
+            sessionId,
+            request.Content,
+            correlationId: correlationId,
+            userId: null,
+            cancellationToken: cancellationToken);
+
         return reply is null ? Results.NotFound () : Results.Ok (new SendMessageResponse (sessionId, reply));
       }
       catch (SessionStaleException)
@@ -64,9 +74,13 @@ public static class ChatEndpoints
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
+      var correlationId = ResolveCorrelationId(http);
+
       var stream = await streamBroker.StartResponseStreamAsync(
           sessionId,
           request.Content,
+          correlationId: correlationId,
+          userId: null,
           cancellationToken: cancellationToken);
 
       if (stream is null)
@@ -125,6 +139,17 @@ public static class ChatEndpoints
     return app;
   }
 
+  private static string ResolveCorrelationId (HttpContext http)
+  {
+    if (http.Items.TryGetValue(CorrelationItemKey, out var value) && value is string correlationId && !string.IsNullOrWhiteSpace(correlationId))
+    {
+      return correlationId;
+    }
+
+    var headerValue = http.Request.Headers[CorrelationHeaderName].ToString();
+    return string.IsNullOrWhiteSpace(headerValue) ? Guid.NewGuid().ToString() : headerValue;
+  }
+
   private static async Task WriteSseEventAsync (
       HttpResponse response,
       IResponseStreamEvent streamEvent,
@@ -164,6 +189,7 @@ public static class ChatEndpoints
         : incomingCorrelationId;
 
       http.Response.Headers[CorrelationHeaderName] = correlationId;
+      http.Items[CorrelationItemKey] = correlationId;
 
       using var _ = logger.BeginScope(new Dictionary<string, object>
       {

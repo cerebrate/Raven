@@ -10,7 +10,12 @@ public interface IChatApplicationService
   Task<string> CreateSessionAsync (CancellationToken cancellationToken = default);
 
   // Sends a message for a session and returns the full reply, or null when the session is unknown.
-  Task<string?> SendMessageAsync (string sessionId, string content, CancellationToken cancellationToken = default);
+  Task<string?> SendMessageAsync (
+      string sessionId,
+      string content,
+      string? correlationId = null,
+      string? userId = null,
+      CancellationToken cancellationToken = default);
 
   // Streams message chunks for a session by invoking onChunkAsync for each chunk.
   // Returns false when the session is unknown; otherwise true.
@@ -18,6 +23,8 @@ public interface IChatApplicationService
       string sessionId,
       string content,
       Func<string, CancellationToken, Task> onChunkAsync,
+      string? correlationId = null,
+      string? userId = null,
       CancellationToken cancellationToken = default);
 
   // Returns session metadata, or null when the session is unknown.

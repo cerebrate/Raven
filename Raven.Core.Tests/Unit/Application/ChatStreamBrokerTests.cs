@@ -38,7 +38,13 @@ public sealed class ChatStreamBrokerTests
     var messageBus = new ForwardingMessageBus(handler);
     var broker = new ChatStreamBroker(chat, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
 
-    var stream = await broker.StartResponseStreamAsync("session-1", "hello", cancellationToken: TestContext.Current.CancellationToken);
+    const string correlationId = "corr-123";
+    var stream = await broker.StartResponseStreamAsync(
+        "session-1",
+        "hello",
+        correlationId: correlationId,
+        userId: "user-1",
+        cancellationToken: TestContext.Current.CancellationToken);
 
     Assert.NotNull (stream);
 
@@ -66,6 +72,12 @@ public sealed class ChatStreamBrokerTests
     Assert.Equal ("chat.response.delta.v1", events[1].Metadata.Type);
     Assert.Equal ("chat.response.delta.v1", events[2].Metadata.Type);
     Assert.Equal ("chat.response.completed.v1", events[3].Metadata.Type);
+
+    Assert.All(messageBus.Published, envelope => Assert.Equal(correlationId, envelope.Metadata.CorrelationId));
+    Assert.Null(messageBus.Published[0].Metadata.CausationId);
+    Assert.Equal(messageBus.Published[0].Metadata.MessageId, messageBus.Published[1].Metadata.CausationId);
+    Assert.Equal(messageBus.Published[1].Metadata.MessageId, messageBus.Published[2].Metadata.CausationId);
+    Assert.Equal(messageBus.Published[2].Metadata.MessageId, messageBus.Published[3].Metadata.CausationId);
   }
 
   [Fact]
@@ -128,13 +140,20 @@ public sealed class ChatStreamBrokerTests
     public Task<string> CreateSessionAsync (CancellationToken cancellationToken = default) =>
         Task.FromResult ("unused");
 
-    public Task<string?> SendMessageAsync (string sessionId, string content, CancellationToken cancellationToken = default) =>
+    public Task<string?> SendMessageAsync (
+        string sessionId,
+        string content,
+        string? correlationId = null,
+        string? userId = null,
+        CancellationToken cancellationToken = default) =>
         Task.FromResult<string?> ("unused");
 
     public async Task<bool> StreamMessageAsync (
         string sessionId,
         string content,
         Func<string, CancellationToken, Task> onChunkAsync,
+        string? correlationId = null,
+        string? userId = null,
         CancellationToken cancellationToken = default)
     {
       if (this.Session is null)

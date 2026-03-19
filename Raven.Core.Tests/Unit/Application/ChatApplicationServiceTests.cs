@@ -19,7 +19,10 @@ public sealed class ChatApplicationServiceTests
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
 
     var error = await Assert.ThrowsAsync<SessionStaleException>(
-        () => sut.SendMessageAsync(sessionId, "hello", TestContext.Current.CancellationToken));
+        () => sut.SendMessageAsync(
+            sessionId,
+            "hello",
+            cancellationToken: TestContext.Current.CancellationToken));
 
     Assert.Equal (sessionId, error.SessionId);
     Assert.False (await sessions.SessionExistsAsync (sessionId));
@@ -39,7 +42,7 @@ public sealed class ChatApplicationServiceTests
         sessionId,
         "hello",
         static (_, _) => Task.CompletedTask,
-        TestContext.Current.CancellationToken));
+        cancellationToken: TestContext.Current.CancellationToken));
 
     Assert.Equal (sessionId, error.SessionId);
     Assert.False (await sessions.SessionExistsAsync (sessionId));
