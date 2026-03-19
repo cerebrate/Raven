@@ -180,6 +180,8 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     var streamPayload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
     Assert.Contains ("event: failed", streamPayload, StringComparison.Ordinal);
     Assert.Contains ("\"Code\":\"session_stale\"", streamPayload, StringComparison.Ordinal);
+    Assert.Contains ("\"Message\":", streamPayload, StringComparison.Ordinal);
+    Assert.Contains ("\"IsRetryable\":false", streamPayload, StringComparison.Ordinal);
   }
 
   private void ClearAgentConversations ()
