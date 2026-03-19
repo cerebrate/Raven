@@ -57,10 +57,11 @@ public class RavenApiClient (HttpClient http)
 
     var eventName = "delta"; // default keeps compatibility with legacy data-only SSE frames.
     var data = new System.Text.StringBuilder();
+    var hasDataLine = false;
 
     async IAsyncEnumerable<string> FlushFrameAsync ([EnumeratorCancellation] CancellationToken ct)
     {
-      if (data.Length == 0)
+      if (!hasDataLine)
       {
         yield break;
       }
@@ -94,30 +95,32 @@ public class RavenApiClient (HttpClient http)
 
         eventName = "delta";
         _ = data.Clear();
+        hasDataLine = false;
         continue;
       }
 
-      if (line.StartsWith (":", StringComparison.Ordinal))
+      if (line.StartsWith(":", StringComparison.Ordinal))
         continue;
 
-      if (line.StartsWith ("event:", StringComparison.Ordinal))
+      if (line.StartsWith("event:", StringComparison.Ordinal))
       {
         eventName = line["event:".Length..].Trim();
         continue;
       }
 
-      if (line.StartsWith ("data:", StringComparison.Ordinal))
+      if (line.StartsWith("data:", StringComparison.Ordinal))
       {
         var segment = line["data:".Length..];
-        if (segment.StartsWith (" ", StringComparison.Ordinal))
+        if (segment.StartsWith(" ", StringComparison.Ordinal))
         {
           segment = segment[1..];
         }
 
-        if (data.Length > 0)
-          _ = data.Append ('\n');
+        if (hasDataLine)
+          _ = data.Append('\n');
 
-        _ = data.Append (segment);
+        _ = data.Append(segment);
+        hasDataLine = true;
       }
     }
 
