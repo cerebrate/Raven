@@ -113,14 +113,29 @@ try
     using var migrationCts = new CancellationTokenSource (TimeSpan.FromSeconds (20));
 
     Log.Information (
-        "Startup checkpoint: database migration starting (CommandTimeout: {CommandTimeoutSeconds}s, OverallTimeout: {OverallTimeoutSeconds}s)",
+        "Startup checkpoint: database migration check starting (CommandTimeout: {CommandTimeoutSeconds}s, OverallTimeout: {OverallTimeoutSeconds}s)",
         15,
         20);
 
     try
     {
-      await db.Database.MigrateAsync (migrationCts.Token);
-      Log.Information ("Startup checkpoint: database migration completed");
+      var pendingMigrations = await db.Database.GetPendingMigrationsAsync (migrationCts.Token);
+      var pendingMigrationList = pendingMigrations.ToList();
+
+      Log.Information (
+          "Startup checkpoint: database migration check completed (PendingMigrations: {PendingMigrationCount})",
+          pendingMigrationList.Count);
+
+      if (pendingMigrationList.Count > 0)
+      {
+        Log.Information ("Startup checkpoint: database migration applying pending migrations");
+        await db.Database.MigrateAsync (migrationCts.Token);
+        Log.Information ("Startup checkpoint: database migration completed");
+      }
+      else
+      {
+        Log.Information ("Startup checkpoint: database migration skipped (no pending migrations)");
+      }
     }
     catch (OperationCanceledException ex) when (migrationCts.IsCancellationRequested)
     {
