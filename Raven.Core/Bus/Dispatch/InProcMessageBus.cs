@@ -1,6 +1,8 @@
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Handlers;
 using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Channels;
 
@@ -12,6 +14,9 @@ public sealed class InProcMessageBus : BackgroundService, IMessageBus
   private static readonly MethodInfo DispatchTypedMethod = typeof(InProcMessageBus)
       .GetMethod(nameof(DispatchTypedAsync), BindingFlags.Instance | BindingFlags.NonPublic)
       ?? throw new InvalidOperationException($"{nameof(InProcMessageBus)} is missing {nameof(DispatchTypedAsync)} method.");
+
+  // Compiled delegate cache keyed by payload type — avoids per-dispatch reflection overhead.
+  private readonly ConcurrentDictionary<Type, Func<DispatchMessage, CancellationToken, Task>> _dispatchDelegateCache = new();
 
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IMessageTypeRegistry _messageTypeRegistry;
@@ -104,25 +109,13 @@ public sealed class InProcMessageBus : BackgroundService, IMessageBus
 
     try
     {
-      var dispatchTask = (Task?)DispatchTypedMethod
-          .MakeGenericMethod(message.PayloadType)
-          .Invoke(this, [message, cancellationToken]);
-
-      if (dispatchTask is null)
-      {
-        throw new InvalidOperationException("Dispatch invocation returned null task.");
-      }
-
-      await dispatchTask;
+      var dispatchDelegate = _dispatchDelegateCache.GetOrAdd(message.PayloadType, CreateDispatchDelegate);
+      await dispatchDelegate(message, cancellationToken);
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
-      var rootException = ex is TargetInvocationException { InnerException: not null }
-          ? ex.InnerException
-          : ex;
-
       _logger.LogError(
-          rootException,
+          ex,
           "Dispatch failed for message type {MessageType}",
           message.Metadata.Type);
 
@@ -132,10 +125,20 @@ public sealed class InProcMessageBus : BackgroundService, IMessageBus
               message.PayloadType.FullName ?? message.PayloadType.Name,
               "Handler execution failed.",
               DateTimeOffset.UtcNow,
-              rootException.GetType().FullName,
-              rootException.Message),
+              ex.GetType().FullName,
+              ex.Message),
           cancellationToken);
     }
+  }
+
+  private Func<DispatchMessage, CancellationToken, Task> CreateDispatchDelegate (Type payloadType)
+  {
+    var method = DispatchTypedMethod.MakeGenericMethod(payloadType);
+    var msgParam = Expression.Parameter(typeof(DispatchMessage), "msg");
+    var ctParam = Expression.Parameter(typeof(CancellationToken), "ct");
+    return Expression.Lambda<Func<DispatchMessage, CancellationToken, Task>>(
+        Expression.Call(Expression.Constant(this), method, msgParam, ctParam),
+        msgParam, ctParam).Compile();
   }
 
   private async Task DispatchTypedAsync<TPayload> (DispatchMessage message, CancellationToken cancellationToken)
