@@ -20,17 +20,19 @@ public interface IConsoleRenderer
   // Write the prompt character(s) that precede user input (no newline).
   void WriteUserPrompt ();
 
-  // Write the agent label before streaming begins (no newline).
-  void BeginResponse ();
-
-  // Write one streamed text chunk inline — called repeatedly as chunks arrive.
-  void WriteChunk (string chunk);
-
-  // Finalise the response (newline, spacing) after all chunks have been written.
-  void EndResponse ();
+  // Render a streaming agent response to the console.
+  // The default SpectreConsoleRenderer implementation runs an AnsiConsole.Status spinner
+  // while accumulating chunks, then renders the full accumulated Markdown once when the stream completes.
+  Task RenderResponseStreamAsync (IAsyncEnumerable<string> chunks, CancellationToken cancellationToken = default);
 
   // Display an error message.
   void ShowError (string message);
+
+  // Display a warning message.
+  void ShowWarning (string message);
+
+  // Prompt shown when stale-session recovery requires creating a new session.
+  void ShowStaleSessionRecoveryPrompt ();
 
   // Display the farewell message when the user exits.
   void ShowGoodbye ();

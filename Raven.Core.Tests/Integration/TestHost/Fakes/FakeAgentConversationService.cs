@@ -7,34 +7,28 @@ public sealed class FakeAgentConversationService : IAgentConversationService
 {
   private readonly ConcurrentDictionary<string, bool> _conversations = new();
 
+  public void ClearConversations () => this._conversations.Clear ();
+
   public Task<string> CreateConversationAsync ()
   {
     var conversationId = Guid.NewGuid().ToString();
-    _conversations[conversationId] = true;
+    this._conversations[conversationId] = true;
     return Task.FromResult (conversationId);
   }
 
-  public Task<string> SendMessageAsync (string conversationId, string content)
-  {
-    if (!_conversations.ContainsKey (conversationId))
-    {
-      throw new InvalidOperationException ($"Conversation '{conversationId}' not found.");
-    }
-
-    return Task.FromResult ($"echo:{content}");
-  }
+  public Task<string> SendMessageAsync (string conversationId, string content) =>
+    !this._conversations.ContainsKey (conversationId)
+      ? throw new ConversationNotFoundException (conversationId)
+      : Task.FromResult ($"echo:{content}");
 
   public async IAsyncEnumerable<string> StreamMessageAsync (
       string conversationId,
       string content,
       [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
   {
-    if (!_conversations.ContainsKey (conversationId))
-    {
-      throw new InvalidOperationException ($"Conversation '{conversationId}' not found.");
-    }
-
-    yield return $"echo:{content}";
+    yield return !this._conversations.ContainsKey (conversationId)
+      ? throw new ConversationNotFoundException (conversationId)
+      : $"echo:{content}";
     await Task.Delay (1, cancellationToken);
     yield return "line one\nline two";
   }

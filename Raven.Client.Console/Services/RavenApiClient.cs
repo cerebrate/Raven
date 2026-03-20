@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ArkaneSystems.Raven.Contracts.Chat;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
@@ -55,23 +56,90 @@ public class RavenApiClient (HttpClient http)
     using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
     using var reader = new StreamReader(stream);
 
+    var eventName = "delta"; // default keeps compatibility with legacy data-only SSE frames.
+    var data = new System.Text.StringBuilder();
+    var hasDataLine = false;
+
+    async IAsyncEnumerable<string> FlushFrameAsync ([EnumeratorCancellation] CancellationToken ct)
+    {
+      if (!hasDataLine)
+      {
+        yield break;
+      }
+
+      var payload = data.ToString();
+
+      if (string.Equals(eventName, "delta", StringComparison.OrdinalIgnoreCase))
+      {
+        if (!string.IsNullOrEmpty(payload))
+          yield return payload;
+      }
+      else if (string.Equals(eventName, "failed", StringComparison.OrdinalIgnoreCase))
+      {
+        if (TryParseFailurePayload(payload, out var failureData))
+        {
+          var message = string.IsNullOrWhiteSpace(failureData.Message)
+            ? "Streaming failed."
+            : failureData.Message;
+
+          throw new StreamEventFailedException(message, failureData.Code, failureData.IsRetryable);
+        }
+
+        throw new StreamEventFailedException(
+            string.IsNullOrWhiteSpace(payload) ? "Streaming failed." : payload,
+            code: null,
+            isRetryable: false);
+      }
+
+      await Task.CompletedTask;
+    }
+
     while (!cancellationToken.IsCancellationRequested)
     {
       var line = await reader.ReadLineAsync(cancellationToken);
-
       if (line is null)
         break;
 
-      // SSE lines look like: "data: <text>"
-      // Skip blank lines, comment lines, and any other non-data frames.
-      if (!line.StartsWith ("data: ", StringComparison.Ordinal))
+      // Blank line terminates one SSE event frame.
+      if (line.Length == 0)
+      {
+        await foreach (var chunk in FlushFrameAsync(cancellationToken))
+          yield return chunk;
+
+        eventName = "delta";
+        _ = data.Clear();
+        hasDataLine = false;
+        continue;
+      }
+
+      if (line.StartsWith(":", StringComparison.Ordinal))
         continue;
 
-      // Strip the "data: " prefix and yield the payload to the caller.
-      var chunk = line["data: ".Length..];
-      if (!string.IsNullOrEmpty (chunk))
-        yield return chunk;
+      if (line.StartsWith("event:", StringComparison.Ordinal))
+      {
+        eventName = line["event:".Length..].Trim();
+        continue;
+      }
+
+      if (line.StartsWith("data:", StringComparison.Ordinal))
+      {
+        var segment = line["data:".Length..];
+        if (segment.StartsWith(" ", StringComparison.Ordinal))
+        {
+          segment = segment[1..];
+        }
+
+        if (hasDataLine)
+          _ = data.Append('\n');
+
+        _ = data.Append(segment);
+        hasDataLine = true;
+      }
     }
+
+    // Handle a final frame if the stream ends without a trailing blank line.
+    await foreach (var chunk in FlushFrameAsync(cancellationToken))
+      yield return chunk;
   }
 
   // GET /api/chat/sessions/{sessionId} — fetch session metadata.
@@ -93,5 +161,31 @@ public class RavenApiClient (HttpClient http)
   {
     var response = await http.DeleteAsync($"/api/chat/sessions/{sessionId}");
     _ = response.EnsureSuccessStatusCode ();
+  }
+
+  private static bool TryParseFailurePayload (string payload, out StreamFailureEventData failureData)
+  {
+    failureData = new StreamFailureEventData("", null, false);
+
+    if (string.IsNullOrWhiteSpace(payload))
+    {
+      return false;
+    }
+
+    try
+    {
+      var parsed = JsonSerializer.Deserialize<StreamFailureEventData>(payload);
+      if (parsed is null)
+      {
+        return false;
+      }
+
+      failureData = parsed;
+      return true;
+    }
+    catch (JsonException)
+    {
+      return false;
+    }
   }
 }

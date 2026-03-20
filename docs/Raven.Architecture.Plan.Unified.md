@@ -246,22 +246,6 @@ Migration strategy (when implemented):
 - keep schema version in config and support additive migrations
 - never auto-overwrite user-edited workspace config
 
-#### Session DB move/migration plan
-Startup migration behavior (one-time, idempotent):
-1. Resolve new DB path: `{workspace-root}/sessions/db/raven.db`
-2. Detect legacy DB path (currently LocalApplicationData-based path)
-3. If new DB does not exist and legacy DB exists:
-   - create target directories
-   - copy/move legacy DB to new path
-   - preserve backup of legacy file until successful startup verification
-4. Point EF Core Sqlite connection string only to new workspace path
-5. Log migration outcome with actionable messages
-
-Guardrails:
-- never overwrite an existing new DB during migration
-- if both DBs exist, prefer new path and emit warning-level telemetry
-- if migration fails, continue in read-safe mode only when configured; otherwise fail fast
-
 ### Memory
 Memory tiers:
 - **Scratchpad** (short-term, session-scoped)
@@ -299,6 +283,8 @@ Minimum metadata per memory item:
 - Rejoin support and optional branch/fork sessions.
 - Export/import support.
 - Explicit deletion semantics (soft/hard/delete-older-than-X) and retention policy.
+- **Current restart policy (pre-replay):** invalidate-and-recover for stale `sessionId -> conversationId` mappings.
+- **Planned evolution:** move to replay-based restore when append-only session logs, snapshots, and deterministic replay prerequisites are implemented.
 
 ### Identity and Personalization
 - Structured profile sections: **AGENT**, **SOUL**, **USER**.
@@ -495,6 +481,9 @@ Tasks:
 3. Implement `Started/Delta/Completed/Failed` streaming path.
 4. Propagate correlation/session/user metadata.
 5. Add dead-letter handling.
+6. Add a message type registry mapping domain message names to allowed payload CLR types and versioned schema intent.
+7. Add dispatch-time contract checks against the message registry as part of dispatcher skeleton implementation.
+8. Add publish-time contract checks in bus producers as each producer is implemented.
 
 Acceptance criteria:
 - Typed envelopes for all runtime requests.
@@ -502,6 +491,8 @@ Acceptance criteria:
 - No unbounded queue growth under load.
 - Failures captured with retry metadata.
 - End-to-end trace correlation available.
+- Dispatcher rejects or dead-letters messages whose metadata type does not match allowed payload contract.
+- Producers validate message contracts at publish-time before enqueueing.
 
 ### Epic 2 (P0): Workspace Layout, Safety, and Persistence
 **Goal:** Durable workspace with scoped access and safe writes.

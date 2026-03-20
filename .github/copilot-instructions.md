@@ -14,6 +14,7 @@ The architecture uses a **session-based conversation model** where clients obtai
 - Two implementations: `SqliteSessionStore` (production) and `InMemorySessionStore` (tests)
 - **Key design principle**: Keep session ID stable and abstract across agent infrastructure swaps
 - Workspace stores: `{workspace}/sessions/db/raven.db` (SQLite), `{workspace}/sessions/logs`, `{workspace}/sessions/snapshots`
+- **Architecture decision**: Use invalidate-and-recover now for stale session-to-conversation mappings, with planned evolution to replay-based restore once session log/snapshot replay prerequisites exist.
 
 ### Workspace Path Resolution (Priority Order)
 1. `Raven:Workspace:RootPath` in `appsettings.json`
@@ -78,8 +79,14 @@ Raven.Client.Console/                 # Console REPL client
 ├── ConsoleLoop.cs                   # REPL main loop
 ├── Services/RavenApiClient.cs       # Typed HTTP client (uses BaseUrl from config)
 ├── Rendering/IConsoleRenderer       # Abstraction for terminal output (Spectre)
+├── Rendering/SpectreConsoleRenderer # Production renderer; Status spinner + Markdown final render
+├── Rendering/MarkdownToSpectreRenderer # Markdig AST → Spectre IRenderable converter
 ├── Models/SessionState.cs           # Holds current session ID
 └── appsettings.json                 # Raven.Core base URL
+
+Raven.Client.Console.Test/           # xUnit tests (v3) for console client
+├── Rendering/MarkdownToSpectreRendererTests.cs  # Conversion and rendering regression tests
+└── Services/RavenApiClientTests.cs  # SSE streaming tests
 
 Raven.Core.Tests/                     # xUnit tests (v3)
 
@@ -160,6 +167,37 @@ dotnet test
 - `IConsoleRenderer` abstracts all terminal output (testable)
 - `SpectreConsoleRenderer` is production; can be mocked in tests
 - Injected into REPL loop; use for structured output, tables, markdown, etc.
+
+#### Markdown Rendering Pipeline
+Agent responses are rendered as formatted Markdown using a two-phase approach in `RenderResponseStreamAsync`:
+
+1. **Streaming phase**: chunks are accumulated silently behind an `AnsiConsole.Status` spinner (a fixed single-line widget). The spinner shows a rolling preview of the last ~60 chars of accumulated text so the user sees progress.
+2. **Final render phase**: once the stream ends, `Status` cleans up its line and `AnsiConsole.Write` renders the complete accumulated text as formatted Markdown via `MarkdownToSpectreRenderer`.
+
+**IMPORTANT**: Never use `AnsiConsole.Live` for streaming Markdown responses — it corrupts the scroll buffer when content grows. Always use `AnsiConsole.Status` for the streaming phase and `AnsiConsole.Write` once for the final render. Additionally, `Console.CursorTop` is unreliable after scroll events.
+
+**Why not `AnsiConsole.Live`**: `Live` is designed for fixed-height widgets (spinners, progress bars). It miscalculates cursor position when the rendered content grows with each update, producing corrupted output (overwrites previous lines, jumps to top of screen). Never use `Live` for growing content.
+
+**Why not plain-text-then-erase**: Accurately counting terminal lines to erase requires knowing the true rendered width of every character (Unicode double-width, ConPTY wrapping, window resize mid-stream). This is not reliably portable.
+
+#### MarkdownToSpectreRenderer
+- Lives in `Raven.Client.Console/Rendering/MarkdownToSpectreRenderer.cs`
+- Converts a Markdown string to a Spectre `IRenderable` using Markdig (v1.1.1+) with `UseAdvancedExtensions()`
+- Called once per response after the stream completes — re-parses the full document each time (acceptable for LLM response sizes)
+- Block mapping: `HeadingBlock` → styled `Markup`, `ParagraphBlock` → `Markup`, `FencedCodeBlock`/`CodeBlock` → `Panel`, `ListBlock` → `Markup`, `QuoteBlock` → `Markup`, `ThematicBreakBlock` → `Rule`, `ContainerBlock` → `Rows`
+- **Critical invariant**: every block-render method must return `null` (not empty `Markup`) when it has no content. Empty `Markup("")` or `Markup("[tag][/]")` renders to zero segments, which causes `SegmentShape.Calculate` inside Spectre to call `lines.Max()` on an empty list, throwing `InvalidOperationException: Sequence contains no elements`. The `null` is filtered out at the `Render()` call site.
+- Top-level `Render()` always returns a non-empty renderable — falls back to `Markup("[dim]…[/]")` for empty/whitespace input (never `Markup("")`).
+- Tests in `Raven.Client.Console.Test/Rendering/MarkdownToSpectreRendererTests.cs` use `Spectre.Console.Testing.TestConsole` to assert rendered plain-text output.
+
+#### Spectre.Console Rendering Gotchas
+- **`SegmentShape.Calculate` crash**: `lines.Max()` on an empty segment list → `"Sequence contains no elements"`. Caused by any renderable that produces zero segments (empty `Markup`, tag-only `Markup` like `[bold][/]`, empty `Panel`). Fix: return `null` from block renderers with no content; filter at collection point.
+- **`AnsiConsole.Live` corruption**: grows-with-content renderables inside `Live` corrupt the scroll buffer. Only use `Live` for truly fixed-height widgets.
+- **`Console.CursorTop` unreliability**: becomes incorrect after terminal scroll events; do not use for line-erase calculations.
+
+### Message Type Registry
+- Track a message type registry with guardrails: 
+  - Dispatch-time contract checks during dispatcher skeleton work
+  - Publish-time contract checks while implementing bus producers
 
 ## Testing
 
@@ -264,6 +302,9 @@ Profiles are versioned with diff/rollback support. Persona controls are separate
 - Per-task budget/timeout to avoid interfering with interactive latency
 - Persistent schedule state (`nextRun`, `lastRun`, `lastStatus`)
 - User-visible activity trail
+- Proactive notifications via configured channels
+- Heartbeat loop driving background work
+- Task state persistence across restarts
 
 #### 7. **MCP Integration** (P1/P2)
 - Client adapters for Model Context Protocol servers
@@ -275,6 +316,9 @@ Profiles are versioned with diff/rollback support. Persona controls are separate
 - Intent classification (e.g., `to-agent` vs `in-presence` for channel clients)
 - Capability negotiation (streaming, approvals, attachments)
 - Identity attribution across all events
+- Web client (Blazor or React)
+- API-first design ensures all clients are equal consumers
+- SSE streaming already supported; WebSocket upgrade path planned
 
 ### Recommended Folder Layout (Future)
 ```
@@ -358,6 +402,11 @@ Raven.Core/
 
 ## Common Tasks
 
+### Changing Agent Behavior or Prompt
+1. Update `Foundry.SystemPrompt` in `appsettings.json` or via user-secrets
+2. No code change needed; restart the API server
+3. New conversations pick up the new prompt
+
 ### Adding a New Session-Related Endpoint
 1. Add route handler in `ChatEndpoints.MapChatEndpoints()`
 2. Inject `ISessionStore` and/or `IAgentConversationService`
@@ -365,24 +414,31 @@ Raven.Core/
 4. Add request/response DTOs to `Raven.Contracts`
 5. Write integration test using `WebApplicationFactory`
 
-### Changing Agent Behavior or Prompt
-1. Update `Foundry.SystemPrompt` in `appsettings.json` or via user-secrets
-2. No code change needed; restart the API server
-3. New conversations pick up the new prompt
+#### Adding a New API Endpoint
+1. Add route handler method to `ChatEndpoints.cs` (or new endpoints file under `Api/Endpoints/`)
+2. Add request/response DTOs to `Raven.Contracts` if shared with client
+3. Register route in the endpoint group map call in `Program.cs`
+4. Add integration test using `WebApplicationFactory`
 
 ### Extending Workspace Structure
 1. Add directory to `WorkspacePaths.EnsureWorkspaceStructure()` and `CheckIntegrity()`
 2. Use `ResolveScopedPath(relativePath)` to safely construct paths (prevents directory traversal)
 
-### Running with Workspace Customization (Container Example)
-```bash
-docker run -e RAVEN_WORKSPACE_ROOT=/data/workspace -v /host/workspace:/data/workspace raven-image
-```
+#### Adding a New Session Store Implementation
+1. Implement `ISessionStore` interface
+2. Register in DI with appropriate lifetime (Singleton recommended)
+3. Add integration tests using the concrete store
+4. Update workspace structure docs if new storage paths are introduced
 
-### Adding a New Message Bus Handler (Future Pattern, P0 Epic)
-When the message bus is implemented:
-1. Define request envelope class in `Bus/Contracts/`
-2. Create handler class implementing `IMessageHandler<T>` in appropriate subdomain
+#### Adding a New Console Command
+1. Add command string constant and handler branch in `ConsoleLoop.RunAsync`
+2. Add corresponding method(s) to `IConsoleRenderer` and `SpectreConsoleRenderer`
+3. Add unit tests for renderer output
+4. Update `/help` table in `ShowHelp()`
+
+#### Adding a Message Bus Handler
+1. Define typed message envelope in `Bus/Contracts/` subdomain
+2. Implement handler class with typed `IMessageHandler<T>` interface
 3. Register handler with dispatcher in `Program.cs` DI setup
 4. Inject bus into caller; dispatch typed envelope
 5. Add correlation ID, session ID, user ID as envelope metadata
@@ -444,3 +500,6 @@ This creates a sustainable feedback loop:
 4. **Project evolves** → Instructions stay current and guide new work
 
 **Goal**: Make `.github/copilot-instructions.md` the canonical reference for how Raven is built and why—a resource that no human maintainer has to maintain alone.
+
+### Console Client Behavior
+- On stale session notifications, warn the user and prompt before creating a replacement session instead of auto-recovering silently.
