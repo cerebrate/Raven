@@ -6,8 +6,21 @@ namespace ArkaneSystems.Raven.Core.Tests.Integration.TestHost.Fakes;
 public sealed class FakeAgentConversationService : IAgentConversationService
 {
   private readonly ConcurrentDictionary<string, bool> _conversations = new();
+  private int _streamChunkDelayMilliseconds = 1;
 
-  public void ClearConversations () => this._conversations.Clear ();
+  public void ClearConversations () => this._conversations.Clear();
+
+  public void SetStreamChunkDelay (TimeSpan delay)
+  {
+    if (delay < TimeSpan.Zero)
+    {
+      throw new ArgumentOutOfRangeException(nameof(delay), "Delay cannot be negative.");
+    }
+
+    this._streamChunkDelayMilliseconds = (int)delay.TotalMilliseconds;
+  }
+
+  public void ResetStreamChunkDelay () => this._streamChunkDelayMilliseconds = 1;
 
   public Task<string> CreateConversationAsync ()
   {
@@ -29,7 +42,13 @@ public sealed class FakeAgentConversationService : IAgentConversationService
     yield return !this._conversations.ContainsKey (conversationId)
       ? throw new ConversationNotFoundException (conversationId)
       : $"echo:{content}";
-    await Task.Delay (1, cancellationToken);
+
+    var delayMs = this._streamChunkDelayMilliseconds;
+    if (delayMs > 0)
+    {
+      await Task.Delay (delayMs, cancellationToken);
+    }
+
     yield return "line one\nline two";
   }
 }
