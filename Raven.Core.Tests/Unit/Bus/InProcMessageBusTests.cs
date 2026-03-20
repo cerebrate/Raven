@@ -90,6 +90,129 @@ public sealed class InProcMessageBusTests
     }
   }
 
+  [Fact]
+  public async Task PublishAsync_DispatchesMessages_InPublishOrder ()
+  {
+    var services = new ServiceCollection();
+    _ = services.AddLogging();
+    _ = services.AddOptions();
+    _ = services.Configure<BusDispatchOptions>(options => options.ChannelCapacity = 8);
+    _ = services.AddSingleton<IMessageTypeRegistry, InMemoryMessageTypeRegistry>();
+    _ = services.AddSingleton<RecordingDeadLetterSink>();
+    _ = services.AddSingleton<IDeadLetterSink>(sp => sp.GetRequiredService<RecordingDeadLetterSink>());
+    _ = services.AddSingleton<OrderingHandler>();
+    _ = services.AddSingleton<IMessageHandler<TestPayload>>(sp => sp.GetRequiredService<OrderingHandler>());
+    _ = services.AddSingleton<InProcMessageBus>();
+
+    await using var provider = services.BuildServiceProvider();
+
+    var registry = provider.GetRequiredService<IMessageTypeRegistry>();
+    registry.Register("test.message.v1", typeof(TestPayload));
+
+    var bus = provider.GetRequiredService<InProcMessageBus>();
+    var handler = provider.GetRequiredService<OrderingHandler>();
+
+    await bus.StartAsync(CancellationToken.None);
+
+    try
+    {
+      await bus.PublishAsync(new MessageEnvelope<TestPayload>(
+          MessageMetadata.Create(type: "test.message.v1"),
+          new TestPayload("one")), TestContext.Current.CancellationToken);
+
+      await bus.PublishAsync(new MessageEnvelope<TestPayload>(
+          MessageMetadata.Create(type: "test.message.v1"),
+          new TestPayload("two")), TestContext.Current.CancellationToken);
+
+      await bus.PublishAsync(new MessageEnvelope<TestPayload>(
+          MessageMetadata.Create(type: "test.message.v1"),
+          new TestPayload("three")), TestContext.Current.CancellationToken);
+
+      var handled = await handler.WaitForCountAsync(expectedCount: 3, timeout: TimeSpan.FromSeconds(2));
+
+      Assert.True(handled);
+      Assert.Equal(["one", "two", "three"], handler.HandledMessages.Select(m => m.Payload.Value).ToArray());
+    }
+    finally
+    {
+      await bus.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Fact]
+  public async Task PublishAsync_WritesDeadLetter_WhenHandlerThrows ()
+  {
+    var services = new ServiceCollection();
+    _ = services.AddLogging();
+    _ = services.AddOptions();
+    _ = services.Configure<BusDispatchOptions>(options => options.ChannelCapacity = 8);
+    _ = services.AddSingleton<IMessageTypeRegistry, InMemoryMessageTypeRegistry>();
+    _ = services.AddSingleton<RecordingDeadLetterSink>();
+    _ = services.AddSingleton<IDeadLetterSink>(sp => sp.GetRequiredService<RecordingDeadLetterSink>());
+    _ = services.AddSingleton<IMessageHandler<TestPayload>, ThrowingHandler>();
+    _ = services.AddSingleton<InProcMessageBus>();
+
+    await using var provider = services.BuildServiceProvider();
+
+    var registry = provider.GetRequiredService<IMessageTypeRegistry>();
+    registry.Register("test.message.v1", typeof(TestPayload));
+
+    var bus = provider.GetRequiredService<InProcMessageBus>();
+    var deadLetters = provider.GetRequiredService<RecordingDeadLetterSink>();
+
+    await bus.StartAsync(CancellationToken.None);
+
+    try
+    {
+      await bus.PublishAsync(new MessageEnvelope<TestPayload>(
+          MessageMetadata.Create(type: "test.message.v1"),
+          new TestPayload("payload")), TestContext.Current.CancellationToken);
+
+      var deadLetter = await deadLetters.WaitForEntryAsync(TimeSpan.FromSeconds(2));
+
+      Assert.NotNull(deadLetter);
+      Assert.Equal("Handler execution failed.", deadLetter.Reason);
+      Assert.Equal(typeof(InvalidOperationException).FullName, deadLetter.ExceptionType);
+      Assert.Equal("handler failed", deadLetter.ExceptionMessage);
+    }
+    finally
+    {
+      await bus.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Fact]
+  public async Task PublishAsync_BlocksWhenQueueIsFull_WithoutActiveReader ()
+  {
+    var services = new ServiceCollection();
+    _ = services.AddLogging();
+    _ = services.AddOptions();
+    _ = services.Configure<BusDispatchOptions>(options => options.ChannelCapacity = 1);
+    _ = services.AddSingleton<IMessageTypeRegistry, InMemoryMessageTypeRegistry>();
+    _ = services.AddSingleton<RecordingDeadLetterSink>();
+    _ = services.AddSingleton<IDeadLetterSink>(sp => sp.GetRequiredService<RecordingDeadLetterSink>());
+    _ = services.AddSingleton<InProcMessageBus>();
+
+    await using var provider = services.BuildServiceProvider();
+
+    var registry = provider.GetRequiredService<IMessageTypeRegistry>();
+    registry.Register("test.message.v1", typeof(TestPayload));
+
+    var bus = provider.GetRequiredService<InProcMessageBus>();
+
+    await bus.PublishAsync(new MessageEnvelope<TestPayload>(
+        MessageMetadata.Create(type: "test.message.v1"),
+        new TestPayload("first")), TestContext.Current.CancellationToken);
+
+    using var publishCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+
+    await Assert.ThrowsAsync<OperationCanceledException>(() => bus.PublishAsync(
+        new MessageEnvelope<TestPayload>(
+            MessageMetadata.Create(type: "test.message.v1"),
+            new TestPayload("second")),
+        publishCts.Token));
+  }
+
   private sealed record TestPayload (string Value);
 
   private sealed class RecordingHandler : IMessageHandler<TestPayload>
@@ -146,5 +269,55 @@ public sealed class InProcMessageBusTests
         return null;
       }
     }
+  }
+
+  private sealed class OrderingHandler : IMessageHandler<TestPayload>
+  {
+    private readonly TaskCompletionSource<bool> _allReceived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _sync = new();
+
+    public List<MessageEnvelope<TestPayload>> HandledMessages { get; } = [];
+
+    public Task HandleAsync (MessageEnvelope<TestPayload> message, CancellationToken cancellationToken)
+    {
+      lock (_sync)
+      {
+        HandledMessages.Add(message);
+        if (HandledMessages.Count >= 3)
+        {
+          _ = _allReceived.TrySetResult(true);
+        }
+      }
+
+      return Task.CompletedTask;
+    }
+
+    public async Task<bool> WaitForCountAsync (int expectedCount, TimeSpan timeout)
+    {
+      lock (_sync)
+      {
+        if (HandledMessages.Count >= expectedCount)
+        {
+          return true;
+        }
+      }
+
+      using var cts = new CancellationTokenSource(timeout);
+
+      try
+      {
+        return await _allReceived.Task.WaitAsync(cts.Token);
+      }
+      catch (OperationCanceledException)
+      {
+        return false;
+      }
+    }
+  }
+
+  private sealed class ThrowingHandler : IMessageHandler<TestPayload>
+  {
+    public Task HandleAsync (MessageEnvelope<TestPayload> message, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("handler failed");
   }
 }
