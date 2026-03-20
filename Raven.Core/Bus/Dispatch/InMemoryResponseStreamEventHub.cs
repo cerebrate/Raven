@@ -53,7 +53,9 @@ public sealed class InMemoryResponseStreamEventHub : IResponseStreamEventHub
     var responseId = envelope.Event.ResponseId;
     if (!_streams.TryGetValue(responseId, out var channel))
     {
-      throw new InvalidOperationException($"Response stream '{responseId}' is not registered.");
+      // Stream not found — the client disconnected and ReadAllAsync already removed it.
+      // Silently discard instead of throwing so normal disconnects don't dead-letter.
+      return;
     }
 
     await channel.Writer.WriteAsync(envelope, cancellationToken);
