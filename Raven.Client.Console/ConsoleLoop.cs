@@ -23,7 +23,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     while (!cancellationToken.IsCancellationRequested)
     {
       renderer.WriteUserPrompt ();
-      var input = System.Console.ReadLine();
+      var input = await ReadLineWithCancellationAsync (cancellationToken);
 
       // null means the input stream was closed (e.g. Ctrl+Z / EOF).
       if (input is null || input.Equals ("/exit", StringComparison.OrdinalIgnoreCase))
@@ -90,7 +90,9 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         renderer.ShowWarning ("The current session is stale and can no longer be used.");
         renderer.ShowStaleSessionRecoveryPrompt ();
 
-        _ = System.Console.ReadLine();
+        _ = await ReadLineWithCancellationAsync (cancellationToken);
+        if (cancellationToken.IsCancellationRequested)
+          break;
 
         var oldSessionId = state.SessionId;
         state.SessionId = await client.CreateSessionAsync ();
@@ -103,5 +105,20 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     }
 
     renderer.ShowGoodbye ();
+  }
+
+  // Reads a line from the console, returning null immediately if the
+  // cancellationToken fires while waiting so the REPL can exit cleanly.
+  // Note: the underlying Task.Run thread remains blocked on Console.ReadLine
+  // until the user actually presses Enter; it is reclaimed when the process exits.
+  private static async Task<string?> ReadLineWithCancellationAsync (CancellationToken cancellationToken)
+  {
+    if (cancellationToken.IsCancellationRequested)
+      return null;
+
+    var readTask = Task.Run (System.Console.ReadLine, CancellationToken.None);
+    await Task.WhenAny (readTask, Task.Delay (Timeout.Infinite, cancellationToken));
+
+    return cancellationToken.IsCancellationRequested ? null : await readTask;
   }
 }
