@@ -1,30 +1,49 @@
+#region header
+
+// Raven.Core - WorkspacePaths.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-25 1:38 PM
+
+#endregion
+
+#region using
+
+using JetBrains.Annotations;
+
+#endregion
+
 namespace ArkaneSystems.Raven.Core.Infrastructure.Filesystem;
 
 public sealed class WorkspacePaths (string workspaceRoot) : IWorkspacePaths
 {
-  private readonly string _workspaceRoot = Path.GetFullPath(workspaceRoot);
+  private readonly string _workspaceRoot = Path.GetFullPath (workspaceRoot);
 
-  public string GetWorkspaceRoot () => _workspaceRoot;
+  public string GetWorkspaceRoot () => this._workspaceRoot;
 
-  public string GetSessionsPath () => Path.Combine (_workspaceRoot, "sessions");
+  public string GetSessionsPath () => Path.Combine (path1: this._workspaceRoot, path2: "sessions");
 
-  public string GetSessionDatabasePath () => Path.Combine (GetSessionsPath (), "db", "raven.db");
+  public string GetSessionDatabasePath () => Path.Combine (path1: this.GetSessionsPath (), path2: "db", path3: "raven.db");
 
-  public string GetConfigPath () => Path.Combine (_workspaceRoot, "config");
+  public string GetConfigPath () => Path.Combine (path1: this._workspaceRoot, path2: "config");
 
   public string ResolveScopedPath (string relativePath)
   {
     if (string.IsNullOrWhiteSpace (relativePath))
     {
-      throw new ArgumentException ("Path cannot be empty.", nameof (relativePath));
+      throw new ArgumentException (message: "Path cannot be empty.", paramName: nameof (relativePath));
     }
 
-    var combined = Path.Combine(_workspaceRoot, relativePath);
-    var fullPath = Path.GetFullPath(combined);
+    string combined = Path.Combine (path1: this._workspaceRoot, path2: relativePath);
+    string fullPath = Path.GetFullPath (combined);
 
-    if (!IsSubPathOf (_workspaceRoot, fullPath))
+    if (!IsSubPathOf (parentPath: this._workspaceRoot, candidatePath: fullPath))
     {
-      throw new InvalidOperationException ($"Path '{relativePath}' resolves outside workspace root '{_workspaceRoot}'.");
+      throw new InvalidOperationException ($"Path '{relativePath}' resolves outside workspace root '{this._workspaceRoot}'.");
     }
 
     return fullPath;
@@ -32,119 +51,120 @@ public sealed class WorkspacePaths (string workspaceRoot) : IWorkspacePaths
 
   public WorkspaceInitializationReport EnsureWorkspaceStructure ()
   {
-    var createdDirectories = new List<string>();
-    var existingDirectories = new List<string>();
+    List<string> createdDirectories  = new List<string> ();
+    List<string> existingDirectories = new List<string> ();
 
-    var expectedDirectories = new[]
-    {
-      _workspaceRoot,
-      GetSessionsPath(),
-      Path.Combine(GetSessionsPath(), "db"),
-      Path.Combine(GetSessionsPath(), "logs"),
-      Path.Combine(GetSessionsPath(), "snapshots"),
-      Path.Combine(_workspaceRoot, "memory"),
-      Path.Combine(_workspaceRoot, "heartbeat"),
-      Path.Combine(_workspaceRoot, "artifacts"),
-      Path.Combine(_workspaceRoot, "audit"),
-      GetConfigPath(),
-      Path.Combine(_workspaceRoot, "tmp")
-    };
+    string[] expectedDirectories = new[]
+                                   {
+                                     this._workspaceRoot,
+                                     this.GetSessionsPath (),
+                                     Path.Combine (path1: this.GetSessionsPath (), path2: "db"),
+                                     Path.Combine (path1: this.GetSessionsPath (), path2: "logs"),
+                                     Path.Combine (path1: this.GetSessionsPath (), path2: "snapshots"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "memory"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "heartbeat"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "artifacts"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "audit"),
+                                     this.GetConfigPath (),
+                                     Path.Combine (path1: this._workspaceRoot, path2: "tmp")
+                                   };
 
-    foreach (var directory in expectedDirectories)
+    foreach (string directory in expectedDirectories)
     {
-      EnsureDirectory(directory, createdDirectories, existingDirectories);
+      this.EnsureDirectory (path: directory, createdDirectories: createdDirectories, existingDirectories: existingDirectories);
     }
 
-    return new WorkspaceInitializationReport(createdDirectories, existingDirectories);
+    return new WorkspaceInitializationReport (CreatedDirectories: createdDirectories, ExistingDirectories: existingDirectories);
   }
 
   public void EnsureDirectory (string path)
-  {
-    EnsureDirectory(path, createdDirectories: null, existingDirectories: null);
-  }
-
-  private void EnsureDirectory (string path, List<string>? createdDirectories, List<string>? existingDirectories)
-  {
-    var fullPath = Path.GetFullPath(path);
-    if (!IsSubPathOf (_workspaceRoot, fullPath))
-    {
-      throw new InvalidOperationException ($"Directory '{path}' is outside workspace root '{_workspaceRoot}'.");
-    }
-
-    var existed = Directory.Exists(fullPath);
-    _ = Directory.CreateDirectory(fullPath);
-
-    if (existed)
-    {
-      existingDirectories?.Add(fullPath);
-    }
-    else
-    {
-      createdDirectories?.Add(fullPath);
-    }
-  }
+    => this.EnsureDirectory (path: path, createdDirectories: null, existingDirectories: null);
 
   public WorkspaceIntegrityReport CheckIntegrity ()
   {
-    var missingDirectories = new List<string>();
+    List<string> missingDirectories = new List<string> ();
 
-    var expectedDirectories = new[]
-        {
-            _workspaceRoot,
-            GetSessionsPath(),
-            Path.Combine(GetSessionsPath(), "db"),
-            Path.Combine(GetSessionsPath(), "logs"),
-            Path.Combine(GetSessionsPath(), "snapshots"),
-            Path.Combine(_workspaceRoot, "memory"),
-            Path.Combine(_workspaceRoot, "heartbeat"),
-            Path.Combine(_workspaceRoot, "artifacts"),
-            Path.Combine(_workspaceRoot, "audit"),
-            GetConfigPath(),
-            Path.Combine(_workspaceRoot, "tmp")
-        };
+    string[] expectedDirectories = new[]
+                                   {
+                                     this._workspaceRoot,
+                                     this.GetSessionsPath (),
+                                     Path.Combine (path1: this.GetSessionsPath (), path2: "db"),
+                                     Path.Combine (path1: this.GetSessionsPath (), path2: "logs"),
+                                     Path.Combine (path1: this.GetSessionsPath (), path2: "snapshots"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "memory"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "heartbeat"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "artifacts"),
+                                     Path.Combine (path1: this._workspaceRoot,     path2: "audit"),
+                                     this.GetConfigPath (),
+                                     Path.Combine (path1: this._workspaceRoot, path2: "tmp")
+                                   };
 
-    foreach (var directory in expectedDirectories)
+    foreach (string directory in expectedDirectories)
     {
       if (!Directory.Exists (directory))
       {
-        missingDirectories.Add(directory);
+        missingDirectories.Add (directory);
       }
     }
 
-    var tmpPath = Path.Combine(_workspaceRoot, "tmp");
-    var probePath = Path.Combine(tmpPath, $"integrity-{Guid.NewGuid():N}.probe");
+    string tmpPath   = Path.Combine (path1: this._workspaceRoot, path2: "tmp");
+    string probePath = Path.Combine (path1: tmpPath,             path2: $"integrity-{Guid.NewGuid ():N}.probe");
 
-    var writeProbeSucceeded = true;
-    string? writeProbeError = null;
+    bool    writeProbeSucceeded = true;
+    string? writeProbeError     = null;
 
     try
     {
-      File.WriteAllText (probePath, "ok");
+      File.WriteAllText (path: probePath, contents: "ok");
       File.Delete (probePath);
     }
     catch (Exception ex)
     {
       writeProbeSucceeded = false;
-      writeProbeError = ex.Message;
+      writeProbeError     = ex.Message;
     }
 
-    return new WorkspaceIntegrityReport (missingDirectories, writeProbeSucceeded, writeProbeError);
+    return new WorkspaceIntegrityReport (MissingDirectories: missingDirectories,
+                                         WriteProbeSucceeded: writeProbeSucceeded,
+                                         WriteProbeError: writeProbeError);
+  }
+
+  private void EnsureDirectory (string path, List<string>? createdDirectories, List<string>? existingDirectories)
+  {
+    string fullPath = Path.GetFullPath (path);
+
+    if (!IsSubPathOf (parentPath: this._workspaceRoot, candidatePath: fullPath))
+    {
+      throw new InvalidOperationException ($"Directory '{path}' is outside workspace root '{this._workspaceRoot}'.");
+    }
+
+    bool existed = Directory.Exists (fullPath);
+    _ = Directory.CreateDirectory (fullPath);
+
+    if (existed)
+    {
+      existingDirectories?.Add (fullPath);
+    }
+    else
+    {
+      createdDirectories?.Add (fullPath);
+    }
   }
 
   private static bool IsSubPathOf (string parentPath, string candidatePath)
   {
-    var parentFullPath = Path.GetFullPath(parentPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+    string parentFullPath = Path.GetFullPath (parentPath)
+                                .TrimEnd (Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                            Path.DirectorySeparatorChar;
 
-    var candidateFullPath = Path.GetFullPath(candidatePath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+    string candidateFullPath = Path.GetFullPath (candidatePath)
+                                   .TrimEnd (Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                               Path.DirectorySeparatorChar;
 
-    var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
+    StringComparison comparison = OperatingSystem.IsWindows ()
+                                    ? StringComparison.OrdinalIgnoreCase
+                                    : StringComparison.Ordinal;
 
-    return candidateFullPath.StartsWith (parentFullPath, comparison);
+    return candidateFullPath.StartsWith (value: parentFullPath, comparisonType: comparison);
   }
 }

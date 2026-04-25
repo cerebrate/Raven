@@ -1,4 +1,22 @@
+#region header
+
+// Raven.Core.Tests - WorkspacePathsTests.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-25 1:38 PM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Core.Infrastructure.Filesystem;
+using JetBrains.Annotations;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Core.Tests.Unit.Infrastructure;
 
@@ -7,18 +25,19 @@ public sealed class WorkspacePathsTests
   [Fact]
   public void ResolveScopedPath_Throws_WhenPathEscapesWorkspaceRoot ()
   {
-    var workspaceRoot = Path.Combine(Path.GetTempPath(), "Raven.Core.Tests", Guid.NewGuid().ToString("N"));
-    var sut = new WorkspacePaths(workspaceRoot);
+    string workspaceRoot =
+      Path.Combine (path1: Path.GetTempPath (), path2: "Raven.Core.Tests", path3: Guid.NewGuid ().ToString ("N"));
+    WorkspacePaths sut = new WorkspacePaths (workspaceRoot);
 
     try
     {
-      Assert.Throws<InvalidOperationException> (() => sut.ResolveScopedPath (Path.Combine ("..", "outside.txt")));
+      _ = Assert.Throws<InvalidOperationException> (() => sut.ResolveScopedPath (Path.Combine (path1: "..", path2: "outside.txt")));
     }
     finally
     {
       if (Directory.Exists (workspaceRoot))
       {
-        Directory.Delete (workspaceRoot, recursive: true);
+        Directory.Delete (path: workspaceRoot, recursive: true);
       }
     }
   }
@@ -26,28 +45,29 @@ public sealed class WorkspacePathsTests
   [Fact]
   public void EnsureWorkspaceStructure_CreatesExpectedDirectories ()
   {
-    var workspaceRoot = Path.Combine(Path.GetTempPath(), "Raven.Core.Tests", Guid.NewGuid().ToString("N"));
-    var sut = new WorkspacePaths(workspaceRoot);
+    string workspaceRoot =
+      Path.Combine (path1: Path.GetTempPath (), path2: "Raven.Core.Tests", path3: Guid.NewGuid ().ToString ("N"));
+    WorkspacePaths sut = new WorkspacePaths (workspaceRoot);
 
     try
     {
-      var report = sut.EnsureWorkspaceStructure ();
+      WorkspaceInitializationReport report = sut.EnsureWorkspaceStructure ();
 
       Assert.True (Directory.Exists (workspaceRoot));
-      Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "sessions", "db")));
-      Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "sessions", "logs")));
-      Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "sessions", "snapshots")));
-      Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "config")));
-      Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "tmp")));
-      Assert.Equal (11, report.TotalDirectories);
-      Assert.Equal (11, report.CreatedDirectories.Count);
+      Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "db")));
+      Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "logs")));
+      Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "snapshots")));
+      Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "config")));
+      Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "tmp")));
+      Assert.Equal (expected: 11, actual: report.TotalDirectories);
+      Assert.Equal (expected: 11, actual: report.CreatedDirectories.Count);
       Assert.Empty (report.ExistingDirectories);
     }
     finally
     {
       if (Directory.Exists (workspaceRoot))
       {
-        Directory.Delete (workspaceRoot, recursive: true);
+        Directory.Delete (path: workspaceRoot, recursive: true);
       }
     }
   }
@@ -55,14 +75,15 @@ public sealed class WorkspacePathsTests
   [Fact]
   public void CheckIntegrity_ReturnsHealthyReport_WhenWorkspaceIsInitialized ()
   {
-    var workspaceRoot = Path.Combine(Path.GetTempPath(), "Raven.Core.Tests", Guid.NewGuid().ToString("N"));
-    var sut = new WorkspacePaths(workspaceRoot);
+    string workspaceRoot =
+      Path.Combine (path1: Path.GetTempPath (), path2: "Raven.Core.Tests", path3: Guid.NewGuid ().ToString ("N"));
+    WorkspacePaths sut = new WorkspacePaths (workspaceRoot);
 
     try
     {
       _ = sut.EnsureWorkspaceStructure ();
 
-      var report = sut.CheckIntegrity();
+      WorkspaceIntegrityReport report = sut.CheckIntegrity ();
 
       Assert.True (report.IsHealthy);
       Assert.Empty (report.MissingDirectories);
@@ -73,7 +94,7 @@ public sealed class WorkspacePathsTests
     {
       if (Directory.Exists (workspaceRoot))
       {
-        Directory.Delete (workspaceRoot, recursive: true);
+        Directory.Delete (path: workspaceRoot, recursive: true);
       }
     }
   }
