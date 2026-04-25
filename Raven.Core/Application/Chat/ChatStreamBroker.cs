@@ -1,3 +1,4 @@
+using ArkaneSystems.Raven.Core.Application.Sessions;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
 using System.Text;
@@ -6,6 +7,7 @@ namespace ArkaneSystems.Raven.Core.Application.Chat;
 
 public sealed class ChatStreamBroker (
     IChatApplicationService chat,
+    ISessionEventLog sessionEventLog,
     IMessageBus messageBus,
     IResponseStreamEventHub streamHub,
     ILogger<ChatStreamBroker> logger) : IChatStreamBroker
@@ -65,6 +67,18 @@ public sealed class ChatStreamBroker (
 
     try
     {
+      _ = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.stream.started.v1",
+          payload: new
+          {
+            ResponseId = responseId,
+            RequestContent = content
+          },
+          correlationId: correlationId,
+          userId: userId,
+          cancellationToken: cancellationToken);
+
       var startedEnvelope = CreateEnvelope(
           type: "chat.response.started.v1",
           sessionId: sessionId,
@@ -100,6 +114,20 @@ public sealed class ChatStreamBroker (
 
       if (!streamed)
       {
+        _ = await sessionEventLog.AppendAsync(
+            sessionId,
+            eventType: "chat.stream.failed.v1",
+            payload: new
+            {
+              ResponseId = responseId,
+              ErrorCode = "session_not_found",
+              ErrorMessage = "Session became unavailable before streaming completed.",
+              IsRetryable = false
+            },
+            correlationId: correlationId,
+            userId: userId,
+            cancellationToken: cancellationToken);
+
         var failedEnvelope = CreateEnvelope(
             type: "chat.response.failed.v1",
             sessionId: sessionId,
@@ -113,13 +141,28 @@ public sealed class ChatStreamBroker (
         return;
       }
 
+      var finalContent = responseContent.ToString();
+
+      _ = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.stream.completed.v1",
+          payload: new
+          {
+            ResponseId = responseId,
+            FinalContent = finalContent,
+            ChunkCount = sequence
+          },
+          correlationId: correlationId,
+          userId: userId,
+          cancellationToken: cancellationToken);
+
       var completedEnvelope = CreateEnvelope(
           type: "chat.response.completed.v1",
           sessionId: sessionId,
           userId: userId,
           correlationId: correlationId,
           causationId: causationId,
-          streamEvent: new ResponseCompleted(responseId, DateTimeOffset.UtcNow, responseContent.ToString()));
+          streamEvent: new ResponseCompleted(responseId, DateTimeOffset.UtcNow, finalContent));
 
       await this.PublishEventAsync(completedEnvelope, cancellationToken);
       terminalPublished = true;
@@ -131,6 +174,20 @@ public sealed class ChatStreamBroker (
     catch (SessionStaleException ex)
     {
       logger.LogInformation("Session {SessionId} is stale during streaming and will require recovery. CorrelationId: {CorrelationId}, UserId: {UserId}", ex.SessionId, correlationId, userId);
+
+      _ = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.stream.failed.v1",
+          payload: new
+          {
+            ResponseId = responseId,
+            ErrorCode = "session_stale",
+            ErrorMessage = ex.Message,
+            IsRetryable = false
+          },
+          correlationId: correlationId,
+          userId: userId,
+          cancellationToken: cancellationToken);
 
       var failedEnvelope = CreateEnvelope(
           type: "chat.response.failed.v1",
@@ -148,6 +205,20 @@ public sealed class ChatStreamBroker (
       // If the backing conversation mapping is missing, surface as stream failure
       // event without failing the HTTP pipeline after streaming has started.
       logger.LogWarning(ex, "Streaming failed for session {SessionId}. CorrelationId: {CorrelationId}, UserId: {UserId}", sessionId, correlationId, userId);
+
+      _ = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.stream.failed.v1",
+          payload: new
+          {
+            ResponseId = responseId,
+            ErrorCode = "conversation_not_found",
+            ErrorMessage = ex.Message,
+            IsRetryable = false
+          },
+          correlationId: correlationId,
+          userId: userId,
+          cancellationToken: cancellationToken);
 
       var failedEnvelope = CreateEnvelope(
           type: "chat.response.failed.v1",

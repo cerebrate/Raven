@@ -286,6 +286,30 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     Assert.True(completedIndex > deltaIndex, "Expected completed event to appear after delta event.");
   }
 
+  [Fact]
+  public async Task SessionLifecycle_WritesAppendOnlyEventLogEntries ()
+  {
+    var sessionId = await this.CreateSessionAsync();
+
+    var sendResponse = await this._client.PostAsJsonAsync(
+        $"/api/chat/sessions/{sessionId}/messages",
+        new SendMessageRequest("event-log"),
+        TestContext.Current.CancellationToken);
+    Assert.Equal(HttpStatusCode.OK, sendResponse.StatusCode);
+
+    var deleteResponse = await this._client.DeleteAsync($"/api/chat/sessions/{sessionId}", TestContext.Current.CancellationToken);
+    Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+    var logPath = Path.Combine(this._factory.WorkspaceRoot, "sessions", "logs", $"{sessionId}.events.ndjson");
+    Assert.True(File.Exists(logPath));
+
+    var lines = await File.ReadAllLinesAsync(logPath, TestContext.Current.CancellationToken);
+    Assert.True(lines.Length >= 3);
+    Assert.Contains(lines, static line => line.Contains("\"eventType\":\"session.created.v1\"", StringComparison.Ordinal));
+    Assert.Contains(lines, static line => line.Contains("\"eventType\":\"chat.message.sent.v1\"", StringComparison.Ordinal));
+    Assert.Contains(lines, static line => line.Contains("\"eventType\":\"session.deleted.v1\"", StringComparison.Ordinal));
+  }
+
   private void ClearAgentConversations ()
   {
     var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;

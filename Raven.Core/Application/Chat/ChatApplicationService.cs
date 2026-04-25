@@ -7,6 +7,7 @@ namespace ArkaneSystems.Raven.Core.Application.Chat;
 public sealed class ChatApplicationService (
     IAgentConversationService conversations,
     ISessionStore sessions,
+    ISessionEventLog sessionEventLog,
     ILogger<ChatApplicationService> logger) : IChatApplicationService
 {
   // Creates both sides of the session mapping so clients only work with Raven session IDs.
@@ -15,7 +16,18 @@ public sealed class ChatApplicationService (
     cancellationToken.ThrowIfCancellationRequested();
 
     var conversationId = await conversations.CreateConversationAsync();
-    return await sessions.CreateSessionAsync(conversationId);
+    var sessionId = await sessions.CreateSessionAsync(conversationId);
+
+    _ = await sessionEventLog.AppendAsync(
+        sessionId,
+        eventType: "session.created.v1",
+        payload: new
+        {
+          ConversationId = conversationId
+        },
+        cancellationToken: cancellationToken);
+
+    return sessionId;
   }
 
   // Resolves the session before sending to the agent so unknown sessions map to a null result.
@@ -47,11 +59,38 @@ public sealed class ChatApplicationService (
 
     try
     {
-      return await conversations.SendMessageAsync(conversationId, content);
+      var reply = await conversations.SendMessageAsync(conversationId, content);
+
+      _ = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.message.sent.v1",
+          payload: new
+          {
+            RequestContent = content,
+            ResponseContent = reply
+          },
+          correlationId: context.CorrelationId,
+          userId: context.UserId,
+          cancellationToken: cancellationToken);
+
+      return reply;
     }
     catch (ConversationNotFoundException ex)
     {
       var invalidated = await sessions.DeleteSessionAsync(sessionId);
+
+      _ = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.message.failed.v1",
+          payload: new
+          {
+            ErrorCode = "session_stale",
+            ErrorMessage = ex.Message,
+            Invalidated = invalidated
+          },
+          correlationId: context.CorrelationId,
+          userId: context.UserId,
+          cancellationToken: cancellationToken);
 
       logger.LogWarning(
           "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, CorrelationId: {CorrelationId}, UserId: {UserId}, Invalidated: {Invalidated}",
@@ -134,7 +173,7 @@ public sealed class ChatApplicationService (
   }
 
   // Deletes session records through the session store.
-  public Task<bool> DeleteSessionAsync (string sessionId, CancellationToken cancellationToken = default)
+  public async Task<bool> DeleteSessionAsync (string sessionId, CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
     {
@@ -142,6 +181,22 @@ public sealed class ChatApplicationService (
     }
 
     cancellationToken.ThrowIfCancellationRequested();
-    return sessions.DeleteSessionAsync(sessionId);
+
+    var deleted = await sessions.DeleteSessionAsync(sessionId);
+    if (!deleted)
+    {
+      return false;
+    }
+
+    _ = await sessionEventLog.AppendAsync(
+        sessionId,
+        eventType: "session.deleted.v1",
+        payload: new
+        {
+          Deleted = true
+        },
+        cancellationToken: cancellationToken);
+
+    return true;
   }
 }

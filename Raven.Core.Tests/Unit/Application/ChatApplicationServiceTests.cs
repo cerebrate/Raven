@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Application.Sessions;
+using ArkaneSystems.Raven.Core.Tests.Unit.Application.Fakes;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Collections.Concurrent;
 
@@ -13,7 +14,8 @@ public sealed class ChatApplicationServiceTests
   {
     var conversations = new StubAgentConversationService();
     var sessions = new InMemorySessionStore();
-    var sut = new ChatApplicationService(conversations, sessions, NullLogger<ChatApplicationService>.Instance);
+    var eventLog = new InMemorySessionEventLog();
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
@@ -33,7 +35,8 @@ public sealed class ChatApplicationServiceTests
   {
     var conversations = new StubAgentConversationService();
     var sessions = new InMemorySessionStore();
-    var sut = new ChatApplicationService(conversations, sessions, NullLogger<ChatApplicationService>.Instance);
+    var eventLog = new InMemorySessionEventLog();
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);

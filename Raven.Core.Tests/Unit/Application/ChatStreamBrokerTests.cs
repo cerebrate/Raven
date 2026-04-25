@@ -1,5 +1,6 @@
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Application.Sessions;
+using ArkaneSystems.Raven.Core.Tests.Unit.Application.Fakes;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
 using ArkaneSystems.Raven.Core.Bus.Handlers;
@@ -14,9 +15,10 @@ public sealed class ChatStreamBrokerTests
   {
     var chat = new StubChatApplicationService { Session = null };
     var streamHub = new InMemoryResponseStreamEventHub();
+    var eventLog = new InMemorySessionEventLog();
     var handler = new ResponseStreamEventForwardingHandler(streamHub, NullLogger<ResponseStreamEventForwardingHandler>.Instance);
     var messageBus = new ForwardingMessageBus(handler);
-    var broker = new ChatStreamBroker(chat, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
+    var broker = new ChatStreamBroker(chat, eventLog, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
 
     var stream = await broker.StartResponseStreamAsync ("missing-session", "hello", cancellationToken: TestContext.Current.CancellationToken);
 
@@ -34,9 +36,10 @@ public sealed class ChatStreamBrokerTests
     };
 
     var streamHub = new InMemoryResponseStreamEventHub();
+    var eventLog = new InMemorySessionEventLog();
     var handler = new ResponseStreamEventForwardingHandler(streamHub, NullLogger<ResponseStreamEventForwardingHandler>.Instance);
     var messageBus = new ForwardingMessageBus(handler);
-    var broker = new ChatStreamBroker(chat, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
+    var broker = new ChatStreamBroker(chat, eventLog, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
 
     const string correlationId = "corr-123";
     var stream = await broker.StartResponseStreamAsync(
@@ -89,9 +92,10 @@ public sealed class ChatStreamBrokerTests
     };
 
     var streamHub = new InMemoryResponseStreamEventHub();
+    var eventLog = new InMemorySessionEventLog();
     var handler = new ResponseStreamEventForwardingHandler(streamHub, NullLogger<ResponseStreamEventForwardingHandler>.Instance);
     var messageBus = new ForwardingMessageBus(handler);
-    var broker = new ChatStreamBroker(chat, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
+    var broker = new ChatStreamBroker(chat, eventLog, messageBus, streamHub, NullLogger<ChatStreamBroker>.Instance);
 
     var stream = await broker.StartResponseStreamAsync("session-1", "hello", cancellationToken: TestContext.Current.CancellationToken);
 

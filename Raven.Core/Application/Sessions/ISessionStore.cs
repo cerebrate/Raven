@@ -1,3 +1,22 @@
+#region header
+
+// Raven.Core - ISessionStore.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-25 1:38 PM
+
+#endregion
+
+#region using
+
+using JetBrains.Annotations;
+
+#endregion
+
 namespace ArkaneSystems.Raven.Core.Application.Sessions;
 
 // The session store is the application's source of truth for the mapping between
@@ -21,7 +40,7 @@ public interface ISessionStore
   Task<bool> SessionExistsAsync (string sessionId);
 
   // Looks up the internal Foundry conversationId for a given sessionId.
-  // Also updates LastActivityAt as a side-effect.
+  // Also updates LastActivityAt as a side effect.
   // Returns null if the session does not exist.
   Task<string?> GetConversationIdAsync (string sessionId);
 
@@ -33,6 +52,29 @@ public interface ISessionStore
   // the sessionId was not found.
   Task<bool> DeleteSessionAsync (string sessionId);
 }
+
+public interface ISessionEventLog
+{
+  Task<SessionEventEnvelope> AppendAsync (string            sessionId,
+                                          string            eventType,
+                                          object            payload,
+                                          string?           correlationId     = null,
+                                          string?           userId            = null,
+                                          CancellationToken cancellationToken = default);
+
+  IAsyncEnumerable<SessionEventEnvelope> ReadAllAsync (string sessionId, CancellationToken cancellationToken = default);
+}
+
+public sealed record SessionEventEnvelope (
+  string         EventId,
+  string         SessionId,
+  long           Sequence,
+  string         EventType,
+  DateTimeOffset OccurredAtUtc,
+  string?        CorrelationId,
+  string?        UserId,
+  int            SchemaVersion,
+  object         Payload);
 
 // Application-layer value type carrying the metadata we hold about a session.
 // Distinct from SessionInfoResponse (the HTTP contract) so the two can evolve

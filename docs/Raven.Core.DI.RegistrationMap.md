@@ -39,6 +39,9 @@ This map captures the current service registration layout in `Raven.Core/Program
 ### Application Layer
 - `ISessionStore -> SqliteSessionStore`
   - **Lifetime:** Scoped
+- `ISessionEventLog -> FileSessionEventLog`
+  - **Lifetime:** Singleton
+  - **Notes:** Writes append-only per-session NDJSON event streams under `{workspace}/sessions/logs/{sessionId}.events.ndjson`.
 - `IChatApplicationService -> ChatApplicationService`
   - **Lifetime:** Scoped
 - `IChatStreamBroker -> ChatStreamBroker`
@@ -70,7 +73,7 @@ This map captures the current service registration layout in `Raven.Core/Program
 ## Current Lifetime Rationale
 
 - **Singletons**
-  - Bus core, message registry, dead-letter sink, stream hub, and Foundry runtime are process-wide coordination components.
+  - Bus core, message registry, dead-letter sink, stream hub, session event log, and Foundry runtime are process-wide coordination components.
 - **Scoped application services**
   - Chat/session orchestration remains request-scoped to align with endpoint usage and persistence patterns.
 - **DbContext factory pattern**

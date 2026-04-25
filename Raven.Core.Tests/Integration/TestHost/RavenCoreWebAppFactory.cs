@@ -17,6 +17,8 @@ public sealed class RavenCoreWebAppFactory : WebApplicationFactory<Program>
         Guid.NewGuid().ToString("N"));
   private readonly string? _previousWorkspaceRoot;
 
+  public string WorkspaceRoot => this._workspaceRoot;
+
   public RavenCoreWebAppFactory ()
   {
     this._previousWorkspaceRoot = Environment.GetEnvironmentVariable ("RAVEN_WORKSPACE_ROOT");

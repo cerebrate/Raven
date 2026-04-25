@@ -97,6 +97,7 @@ try
   // The session store is scoped so it aligns with the EF DbContext lifetime
   // used by SqliteSessionStore. Each HTTP request gets its own instance.
   _ = builder.Services.AddScoped<ISessionStore, SqliteSessionStore> ();
+  _ = builder.Services.AddSingleton<ISessionEventLog, FileSessionEventLog> ();
   _ = builder.Services.AddScoped<IChatApplicationService, ChatApplicationService> ();
   _ = builder.Services.AddScoped<IChatStreamBroker, ChatStreamBroker> ();
 
