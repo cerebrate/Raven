@@ -12,14 +12,24 @@ public interface IWorkspacePaths
 
   string ResolveScopedPath (string relativePath);
 
-  void EnsureWorkspaceStructure ();
+  WorkspaceInitializationReport EnsureWorkspaceStructure ();
 
   void EnsureDirectory (string path);
 
   WorkspaceIntegrityReport CheckIntegrity ();
 }
 
-public sealed record WorkspaceIntegrityReport (IReadOnlyList<string> Issues)
+public sealed record WorkspaceInitializationReport (
+    IReadOnlyList<string> CreatedDirectories,
+    IReadOnlyList<string> ExistingDirectories)
 {
-  public bool IsHealthy => Issues.Count == 0;
+  public int TotalDirectories => CreatedDirectories.Count + ExistingDirectories.Count;
+}
+
+public sealed record WorkspaceIntegrityReport (
+    IReadOnlyList<string> MissingDirectories,
+    bool WriteProbeSucceeded,
+    string? WriteProbeError)
+{
+  public bool IsHealthy => MissingDirectories.Count == 0 && WriteProbeSucceeded;
 }

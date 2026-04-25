@@ -21,6 +21,10 @@ This map captures the current service registration layout in `Raven.Core/Program
 - `IWorkspacePaths -> WorkspacePaths`
   - **Lifetime:** Singleton
   - **Notes:** Workspace root resolved at startup; structure and integrity checked before host run.
+  - **Startup telemetry:**
+    - Initialization checkpoint logs created/existing/total workspace directories.
+    - Integrity checkpoint logs health, missing-directory count, and write-probe success.
+    - Startup fails fast with a detailed integrity error message that includes missing directory paths and probe failure details.
 
 ### Persistence
 - `IDbContextFactory<RavenDbContext>` via `AddDbContextFactory`

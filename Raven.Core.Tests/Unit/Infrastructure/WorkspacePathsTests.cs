@@ -31,7 +31,7 @@ public sealed class WorkspacePathsTests
 
     try
     {
-      sut.EnsureWorkspaceStructure ();
+      var report = sut.EnsureWorkspaceStructure ();
 
       Assert.True (Directory.Exists (workspaceRoot));
       Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "sessions", "db")));
@@ -39,7 +39,9 @@ public sealed class WorkspacePathsTests
       Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "sessions", "snapshots")));
       Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "config")));
       Assert.True (Directory.Exists (Path.Combine (workspaceRoot, "tmp")));
-
+      Assert.Equal (11, report.TotalDirectories);
+      Assert.Equal (11, report.CreatedDirectories.Count);
+      Assert.Empty (report.ExistingDirectories);
     }
     finally
     {
@@ -58,12 +60,14 @@ public sealed class WorkspacePathsTests
 
     try
     {
-      sut.EnsureWorkspaceStructure ();
+      _ = sut.EnsureWorkspaceStructure ();
 
       var report = sut.CheckIntegrity();
 
       Assert.True (report.IsHealthy);
-      Assert.Empty (report.Issues);
+      Assert.Empty (report.MissingDirectories);
+      Assert.True (report.WriteProbeSucceeded);
+      Assert.Null (report.WriteProbeError);
     }
     finally
     {

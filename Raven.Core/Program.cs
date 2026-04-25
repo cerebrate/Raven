@@ -42,16 +42,32 @@ try
   Log.Information ("Startup checkpoint: workspace initialization starting at {WorkspaceRoot}", workspaceRoot);
 
   var workspacePaths = new WorkspacePaths(workspaceRoot);
-  workspacePaths.EnsureWorkspaceStructure ();
-  Log.Information ("Startup checkpoint: workspace initialization completed");
+  var initializationReport = workspacePaths.EnsureWorkspaceStructure();
+  Log.Information (
+      "Startup checkpoint: workspace initialization completed (CreatedDirectories: {CreatedCount}, ExistingDirectories: {ExistingCount}, TotalDirectories: {TotalCount})",
+      initializationReport.CreatedDirectories.Count,
+      initializationReport.ExistingDirectories.Count,
+      initializationReport.TotalDirectories);
 
   Log.Information ("Startup checkpoint: workspace integrity check starting");
   var workspaceIntegrity = workspacePaths.CheckIntegrity();
-  Log.Information ("Startup checkpoint: workspace integrity check completed (Healthy: {IsHealthy})", workspaceIntegrity.IsHealthy);
+  Log.Information (
+      "Startup checkpoint: workspace integrity check completed (Healthy: {IsHealthy}, MissingDirectories: {MissingCount}, WriteProbeSucceeded: {WriteProbeSucceeded})",
+      workspaceIntegrity.IsHealthy,
+      workspaceIntegrity.MissingDirectories.Count,
+      workspaceIntegrity.WriteProbeSucceeded);
   if (!workspaceIntegrity.IsHealthy)
   {
+    var missingDirectories = workspaceIntegrity.MissingDirectories.Count == 0
+      ? "none"
+      : string.Join (", ", workspaceIntegrity.MissingDirectories);
+
+    var writeProbeError = string.IsNullOrWhiteSpace(workspaceIntegrity.WriteProbeError)
+      ? "none"
+      : workspaceIntegrity.WriteProbeError;
+
     throw new InvalidOperationException (
-        $"Workspace integrity checks failed: {string.Join (" | ", workspaceIntegrity.Issues)}");
+        $"Workspace integrity checks failed. MissingDirectories: {missingDirectories}. WriteProbeError: {writeProbeError}");
   }
 
   _ = builder.Services.AddSingleton<IWorkspacePaths> (workspacePaths);

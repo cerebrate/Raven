@@ -30,22 +30,40 @@ public sealed class WorkspacePaths (string workspaceRoot) : IWorkspacePaths
     return fullPath;
   }
 
-  public void EnsureWorkspaceStructure ()
+  public WorkspaceInitializationReport EnsureWorkspaceStructure ()
   {
-    EnsureDirectory (_workspaceRoot);
-    EnsureDirectory (GetSessionsPath ());
-    EnsureDirectory (Path.Combine (GetSessionsPath (), "db"));
-    EnsureDirectory (Path.Combine (GetSessionsPath (), "logs"));
-    EnsureDirectory (Path.Combine (GetSessionsPath (), "snapshots"));
-    EnsureDirectory (Path.Combine (_workspaceRoot, "memory"));
-    EnsureDirectory (Path.Combine (_workspaceRoot, "heartbeat"));
-    EnsureDirectory (Path.Combine (_workspaceRoot, "artifacts"));
-    EnsureDirectory (Path.Combine (_workspaceRoot, "audit"));
-    EnsureDirectory (GetConfigPath ());
-    EnsureDirectory (Path.Combine (_workspaceRoot, "tmp"));
+    var createdDirectories = new List<string>();
+    var existingDirectories = new List<string>();
+
+    var expectedDirectories = new[]
+    {
+      _workspaceRoot,
+      GetSessionsPath(),
+      Path.Combine(GetSessionsPath(), "db"),
+      Path.Combine(GetSessionsPath(), "logs"),
+      Path.Combine(GetSessionsPath(), "snapshots"),
+      Path.Combine(_workspaceRoot, "memory"),
+      Path.Combine(_workspaceRoot, "heartbeat"),
+      Path.Combine(_workspaceRoot, "artifacts"),
+      Path.Combine(_workspaceRoot, "audit"),
+      GetConfigPath(),
+      Path.Combine(_workspaceRoot, "tmp")
+    };
+
+    foreach (var directory in expectedDirectories)
+    {
+      EnsureDirectory(directory, createdDirectories, existingDirectories);
+    }
+
+    return new WorkspaceInitializationReport(createdDirectories, existingDirectories);
   }
 
   public void EnsureDirectory (string path)
+  {
+    EnsureDirectory(path, createdDirectories: null, existingDirectories: null);
+  }
+
+  private void EnsureDirectory (string path, List<string>? createdDirectories, List<string>? existingDirectories)
   {
     var fullPath = Path.GetFullPath(path);
     if (!IsSubPathOf (_workspaceRoot, fullPath))
@@ -53,12 +71,22 @@ public sealed class WorkspacePaths (string workspaceRoot) : IWorkspacePaths
       throw new InvalidOperationException ($"Directory '{path}' is outside workspace root '{_workspaceRoot}'.");
     }
 
-    Directory.CreateDirectory (fullPath);
+    var existed = Directory.Exists(fullPath);
+    _ = Directory.CreateDirectory(fullPath);
+
+    if (existed)
+    {
+      existingDirectories?.Add(fullPath);
+    }
+    else
+    {
+      createdDirectories?.Add(fullPath);
+    }
   }
 
   public WorkspaceIntegrityReport CheckIntegrity ()
   {
-    var issues = new List<string>();
+    var missingDirectories = new List<string>();
 
     var expectedDirectories = new[]
         {
@@ -79,12 +107,15 @@ public sealed class WorkspacePaths (string workspaceRoot) : IWorkspacePaths
     {
       if (!Directory.Exists (directory))
       {
-        issues.Add ($"Missing directory: {directory}");
+        missingDirectories.Add(directory);
       }
     }
 
     var tmpPath = Path.Combine(_workspaceRoot, "tmp");
     var probePath = Path.Combine(tmpPath, $"integrity-{Guid.NewGuid():N}.probe");
+
+    var writeProbeSucceeded = true;
+    string? writeProbeError = null;
 
     try
     {
@@ -93,10 +124,11 @@ public sealed class WorkspacePaths (string workspaceRoot) : IWorkspacePaths
     }
     catch (Exception ex)
     {
-      issues.Add ($"Workspace write probe failed under '{tmpPath}': {ex.Message}");
+      writeProbeSucceeded = false;
+      writeProbeError = ex.Message;
     }
 
-    return new WorkspaceIntegrityReport (issues);
+    return new WorkspaceIntegrityReport (missingDirectories, writeProbeSucceeded, writeProbeError);
   }
 
   private static bool IsSubPathOf (string parentPath, string candidatePath)
