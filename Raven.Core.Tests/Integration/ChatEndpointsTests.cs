@@ -203,11 +203,145 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     Assert.Equal(correlationId, Assert.Single(values));
   }
 
+  [Fact]
+  public async Task StreamMessage_ConcurrentRequestsRemainSessionIsolated ()
+  {
+    var prompts = Enumerable.Range(1, 6).Select(i => $"concurrent-{i}").ToArray();
+    var sessions = new List<string>();
+
+    foreach (var _ in prompts)
+    {
+      sessions.Add(await this.CreateSessionAsync());
+    }
+
+    var tasks = sessions
+        .Zip(prompts, static (sessionId, prompt) => (sessionId, prompt))
+        .Select(async x =>
+        {
+          var payload = await this.StreamSessionMessageAsync(x.sessionId, x.prompt, CancellationToken.None);
+          return (x.prompt, payload);
+        })
+        .ToArray();
+
+    var results = await Task.WhenAll(tasks);
+
+    foreach (var result in results)
+    {
+      Assert.Contains($"data: echo:{result.prompt}", result.payload, StringComparison.Ordinal);
+
+      foreach (var otherPrompt in prompts.Where(p => !string.Equals(p, result.prompt, StringComparison.Ordinal)))
+      {
+        Assert.DoesNotContain($"data: echo:{otherPrompt}", result.payload, StringComparison.Ordinal);
+      }
+    }
+  }
+
+  [Fact]
+  public async Task StreamMessage_MixedCancellationAndCompletion_BehavesAsExpected ()
+  {
+    this.ConfigureFakeStreamChunkDelay(TimeSpan.FromMilliseconds(250));
+
+    try
+    {
+      var prompts = Enumerable.Range(1, 6).Select(i => $"cancel-mix-{i}").ToArray();
+      var sessions = new List<string>();
+
+      foreach (var _ in prompts)
+      {
+        sessions.Add(await this.CreateSessionAsync());
+      }
+
+      var tasks = sessions
+          .Zip(prompts, static (sessionId, prompt) => (sessionId, prompt))
+          .Select((x, index) => this.RunStreamWithOptionalCancellationAsync(
+              x.sessionId,
+              x.prompt,
+              cancelAfter: index % 2 == 0 ? TimeSpan.FromMilliseconds(80) : null))
+          .ToArray();
+
+      var outcomes = await Task.WhenAll(tasks);
+
+      Assert.Contains(outcomes, static o => o == StreamExecutionOutcome.Canceled);
+      Assert.Contains(outcomes, static o => o == StreamExecutionOutcome.Completed);
+    }
+    finally
+    {
+      this.ResetFakeStreamChunkDelay();
+    }
+  }
+
+  [Fact]
+  public async Task StreamMessage_SseEventOrder_IsStartedThenDeltaThenCompleted ()
+  {
+    var sessionId = await this.CreateSessionAsync();
+
+    var payload = await this.StreamSessionMessageAsync(sessionId, "ordering-check", TestContext.Current.CancellationToken);
+
+    var startedIndex = payload.IndexOf("event: started", StringComparison.Ordinal);
+    var deltaIndex = payload.IndexOf("event: delta", StringComparison.Ordinal);
+    var completedIndex = payload.IndexOf("event: completed", StringComparison.Ordinal);
+
+    Assert.True(startedIndex >= 0, "Expected started event in stream payload.");
+    Assert.True(deltaIndex > startedIndex, "Expected delta event to appear after started event.");
+    Assert.True(completedIndex > deltaIndex, "Expected completed event to appear after delta event.");
+  }
+
   private void ClearAgentConversations ()
   {
     var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
     Assert.NotNull (fake);
     fake.ClearConversations ();
+  }
+
+  private void ConfigureFakeStreamChunkDelay (TimeSpan delay)
+  {
+    var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
+    Assert.NotNull(fake);
+    fake.SetStreamChunkDelay(delay);
+  }
+
+  private void ResetFakeStreamChunkDelay ()
+  {
+    var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
+    Assert.NotNull(fake);
+    fake.ResetStreamChunkDelay();
+  }
+
+  private async Task<string> StreamSessionMessageAsync (string sessionId, string prompt, CancellationToken cancellationToken)
+  {
+    var response = await this._client.PostAsJsonAsync(
+        $"/api/chat/sessions/{sessionId}/messages/stream",
+        new SendMessageRequest(prompt),
+        cancellationToken);
+
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    return await response.Content.ReadAsStringAsync(cancellationToken);
+  }
+
+  private async Task<StreamExecutionOutcome> RunStreamWithOptionalCancellationAsync (
+      string sessionId,
+      string prompt,
+      TimeSpan? cancelAfter)
+  {
+    using var cts = cancelAfter.HasValue
+      ? new CancellationTokenSource(cancelAfter.Value)
+      : new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    try
+    {
+      _ = await this.StreamSessionMessageAsync(sessionId, prompt, cts.Token);
+      return StreamExecutionOutcome.Completed;
+    }
+    catch (OperationCanceledException)
+    {
+      return StreamExecutionOutcome.Canceled;
+    }
+  }
+
+  private enum StreamExecutionOutcome
+  {
+    Completed,
+    Canceled
   }
 
   private async Task<string> CreateSessionAsync ()

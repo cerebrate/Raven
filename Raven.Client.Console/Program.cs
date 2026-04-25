@@ -27,7 +27,7 @@ if (string.IsNullOrWhiteSpace (ravenCoreBaseUrl))
 {
   ravenCoreBaseUri = new Uri (defaultRavenCoreBaseUrl, UriKind.Absolute);
 }
-else if (!Uri.TryCreate (ravenCoreBaseUrl, UriKind.Absolute, out ravenCoreBaseUri))
+else if (!Uri.TryCreate (ravenCoreBaseUrl, UriKind.Absolute, out ravenCoreBaseUri!))
 {
   throw new InvalidOperationException (
       $"Configuration value 'RavenCore:BaseUrl' is not a valid absolute URI: '{ravenCoreBaseUrl}'.");
