@@ -90,6 +90,13 @@ public class RavenApiClient (HttpClient http)
             code: null,
             isRetryable: false);
       }
+      else if (string.Equals(eventName, "server_shutdown", StringComparison.OrdinalIgnoreCase))
+      {
+        // The server is about to shut down or restart. Stop consuming the stream
+        // and surface the event to the caller so they can display a warning.
+        var isRestart = string.Equals(payload, "restart", StringComparison.OrdinalIgnoreCase);
+        throw new ServerShuttingDownException(isRestart);
+      }
 
       await Task.CompletedTask;
     }
@@ -160,6 +167,23 @@ public class RavenApiClient (HttpClient http)
   public async Task DeleteSessionAsync (string sessionId)
   {
     var response = await http.DeleteAsync($"/api/chat/sessions/{sessionId}");
+    _ = response.EnsureSuccessStatusCode ();
+  }
+
+  // POST /api/admin/shutdown — request a graceful server shutdown.
+  // The server notifies all active sessions and stops after a short grace period.
+  public async Task RequestShutdownAsync ()
+  {
+    var response = await http.PostAsync ("/api/admin/shutdown", content: null);
+    _ = response.EnsureSuccessStatusCode ();
+  }
+
+  // POST /api/admin/restart — request a graceful server restart.
+  // The server notifies all active sessions, stops, and the container runner
+  // is expected to restart the process based on the exit code.
+  public async Task RequestRestartAsync ()
+  {
+    var response = await http.PostAsync ("/api/admin/restart", content: null);
     _ = response.EnsureSuccessStatusCode ();
   }
 

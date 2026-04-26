@@ -76,6 +76,45 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         continue;
       }
 
+      // /shutdown and /restart: admin commands that stop or restart Raven.Core.
+      // Both require explicit confirmation ("yes") before the request is sent
+      // to avoid accidental disconnection of all connected clients.
+      if (input.Equals ("/shutdown", StringComparison.OrdinalIgnoreCase) ||
+          input.Equals ("/restart", StringComparison.OrdinalIgnoreCase))
+      {
+        var isRestart = input.Equals ("/restart", StringComparison.OrdinalIgnoreCase);
+
+        renderer.ShowAdminCommandConfirmationPrompt (isRestart);
+        var confirmation = await ReadLineWithCancellationAsync (cancellationToken);
+
+        if (cancellationToken.IsCancellationRequested)
+          break;
+
+        if (!string.Equals (confirmation, "yes", StringComparison.OrdinalIgnoreCase))
+        {
+          renderer.ShowWarning ("Cancelled.");
+          continue;
+        }
+
+        try
+        {
+          if (isRestart)
+            await client.RequestRestartAsync ();
+          else
+            await client.RequestShutdownAsync ();
+
+          renderer.ShowAdminCommandAccepted (isRestart);
+        }
+        catch (Exception ex)
+        {
+          renderer.ShowError (ex.Message);
+          continue;
+        }
+
+        // The server is stopping; exit the client loop cleanly.
+        break;
+      }
+
       // Any other input is treated as a chat message. The renderer owns the full
       // response lifecycle: it streams chunks, accumulates them while showing
       // status/progress during streaming, then renders the full Markdown response once.
@@ -97,6 +136,13 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         var oldSessionId = state.SessionId;
         state.SessionId = await client.CreateSessionAsync ();
         renderer.ShowNewSession (oldSessionId, state.SessionId);
+      }
+      catch (ServerShuttingDownException ex)
+      {
+        // The server is shutting down or restarting mid-stream. Display the
+        // appropriate message and exit the client loop.
+        renderer.ShowAdminCommandAccepted (ex.IsRestart);
+        break;
       }
       catch (Exception ex)
       {

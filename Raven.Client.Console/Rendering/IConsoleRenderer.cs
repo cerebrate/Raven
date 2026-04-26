@@ -42,4 +42,11 @@ public interface IConsoleRenderer
 
   // Confirm that the old session was closed and a new one has started.
   void ShowNewSession (string oldSessionId, string newSessionId);
+
+  // Prompt shown when the user enters /shutdown or /restart to obtain confirmation
+  // before the command is sent to the server.
+  void ShowAdminCommandConfirmationPrompt (bool isRestart);
+
+  // Displayed after the server accepts a shutdown or restart command.
+  void ShowAdminCommandAccepted (bool isRestart);
 }

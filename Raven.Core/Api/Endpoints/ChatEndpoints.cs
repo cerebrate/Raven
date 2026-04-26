@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ArkaneSystems.Raven.Contracts.Chat;
+using ArkaneSystems.Raven.Core.Application.Admin;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
@@ -65,14 +66,24 @@ public static class ChatEndpoints
     // immediately so the client sees text appearing in real time.
     // Response buffering is disabled so bytes are not held by ASP.NET Core's
     // output buffer before being sent to the client.
+    // Returns 503 Service Unavailable if a shutdown or restart is in progress.
     _ = group.MapPost ("/sessions/{sessionId}/messages/stream", async (
         string sessionId,
         SendMessageRequest request,
         IChatStreamBroker streamBroker,
         IResponseStreamEventHub streamHub,
+        IShutdownCoordinator shutdownCoordinator,
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
+      // Reject new streaming requests once shutdown/restart has been initiated.
+      // Active streams have already been notified via ServerShuttingDown events;
+      // this guards against new requests racing in during the grace period.
+      if (shutdownCoordinator.IsShutdownRequested)
+      {
+        http.Response.StatusCode = 503;
+        return;
+      }
       var requestContext = BuildRequestContext(http);
 
       var stream = await streamBroker.StartResponseStreamAsync(
@@ -166,6 +177,10 @@ public static class ChatEndpoints
         "failed",
         JsonSerializer.Serialize(new StreamFailureEventData(failed.ErrorMessage, failed.ErrorCode, failed.IsRetryable))
       ),
+      // Broadcast when the server is preparing to shut down or restart.
+      // The data payload indicates whether a restart will follow so the client
+      // can display an appropriate message.
+      ServerShuttingDown shutdown => ("server_shutdown", shutdown.IsRestart ? "restart" : "shutdown"),
       _ => ("unknown", string.Empty)
     };
 

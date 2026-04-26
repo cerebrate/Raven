@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.AgentRuntime.Foundry;
 using ArkaneSystems.Raven.Core.Api.Endpoints;
+using ArkaneSystems.Raven.Core.Application.Admin;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Application.Sessions;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
@@ -117,6 +118,10 @@ try
   _ = builder.Services.AddSingleton<IMessageBus> (sp => sp.GetRequiredService<InProcMessageBus> ());
   _ = builder.Services.AddHostedService (sp => sp.GetRequiredService<InProcMessageBus> ());
 
+  // ShutdownCoordinator is singleton so it holds stable state across requests
+  // and can be queried cheaply by every streaming endpoint.
+  _ = builder.Services.AddSingleton<IShutdownCoordinator, ShutdownCoordinator> ();
+
   var app = builder.Build();
 
   // Apply any pending EF Core migrations automatically at startup.
@@ -169,6 +174,7 @@ try
 
   _ = app.MapGet ("/health", () => Results.Ok (new { status = "ok" }));
   _ = app.MapChatEndpoints ();
+  _ = app.MapAdminEndpoints ();
 
   Log.Information ("Startup checkpoint: entering app.Run (Kestrel should begin listening)");
   app.Run ();

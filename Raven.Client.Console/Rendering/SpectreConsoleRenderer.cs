@@ -42,6 +42,8 @@ public class SpectreConsoleRenderer : IConsoleRenderer
 
     table.AddRow ("[steelblue1]/new[/]", "Start a new session");
     table.AddRow ("[steelblue1]/history[/]", "Show current session info");
+    table.AddRow ("[steelblue1]/shutdown[/]", "Shut down the Raven.Core server (requires confirmation)");
+    table.AddRow ("[steelblue1]/restart[/]", "Restart the Raven.Core server (requires confirmation)");
     table.AddRow ("[steelblue1]/help[/]", "Show this help");
     table.AddRow ("[steelblue1]/exit[/]", "End the session and quit");
 
@@ -148,6 +150,21 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   {
     AnsiConsole.MarkupLine ($"[grey]Previous session [dim]{Markup.Escape (oldSessionId)}[/] closed.[/]");
     AnsiConsole.MarkupLine ($"[grey]New session:[/] [dim]{Markup.Escape (newSessionId)}[/]");
+    AnsiConsole.WriteLine ();
+  }
+
+  public void ShowAdminCommandConfirmationPrompt (bool isRestart)
+  {
+    var action = isRestart ? "restart" : "shut down";
+    AnsiConsole.MarkupLine ($"[yellow]This will {action} the Raven.Core server and disconnect all connected clients.[/]");
+    AnsiConsole.Markup ("[grey]Type [/][steelblue1]yes[/][grey] to confirm, or press Enter to cancel: [/]");
+  }
+
+  public void ShowAdminCommandAccepted (bool isRestart)
+  {
+    AnsiConsole.WriteLine ();
+    var action = isRestart ? "restarting" : "shutting down";
+    AnsiConsole.MarkupLine ($"[yellow]Server is {action}. Goodbye.[/]");
     AnsiConsole.WriteLine ();
   }
 }

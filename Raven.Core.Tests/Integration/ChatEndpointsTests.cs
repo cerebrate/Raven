@@ -8,7 +8,8 @@ using System.Net.Http.Json;
 
 namespace ArkaneSystems.Raven.Core.Tests.Integration;
 
-public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClassFixture<RavenCoreWebAppFactory>
+[Collection(IntegrationTestCollection.Name)]
+public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
 {
   private readonly RavenCoreWebAppFactory _factory = factory;
   private readonly HttpClient _client = factory.CreateClient();

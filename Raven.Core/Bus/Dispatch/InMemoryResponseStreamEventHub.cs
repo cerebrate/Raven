@@ -70,4 +70,8 @@ public sealed class InMemoryResponseStreamEventHub : IResponseStreamEventHub
       channel.Writer.TryComplete();
     }
   }
+
+  // Returns a snapshot of all currently open stream IDs. Used by ShutdownCoordinator
+  // to broadcast a shutdown notification to every active SSE client.
+  public IReadOnlyCollection<string> GetActiveStreamIds () => _streams.Keys.ToArray();
 }
