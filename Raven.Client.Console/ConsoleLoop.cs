@@ -105,13 +105,15 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           continue;
         }
 
-        // /shutdown and /restart: admin commands that stop or restart Raven.Core.
-        // Both require explicit confirmation ("yes") before the request is sent
-        // to avoid accidental disconnection of all connected clients.
-        if (input.Equals ("/shutdown", StringComparison.OrdinalIgnoreCase) ||
-            input.Equals ("/restart", StringComparison.OrdinalIgnoreCase))
+        // /admin:shutdown and /admin:restart: admin commands that stop or restart
+        // Raven.Core. The /admin: prefix visually distinguishes these destructive
+        // operations from ordinary session commands (/new, /history) and makes it
+        // obvious in the /help table that they affect all connected clients.
+        // Both require explicit confirmation ("yes") before the request is sent.
+        if (input.Equals ("/admin:shutdown", StringComparison.OrdinalIgnoreCase) ||
+            input.Equals ("/admin:restart", StringComparison.OrdinalIgnoreCase))
         {
-          var isRestart = input.Equals ("/restart", StringComparison.OrdinalIgnoreCase);
+          var isRestart = input.Equals ("/admin:restart", StringComparison.OrdinalIgnoreCase);
 
           renderer.ShowAdminCommandConfirmationPrompt (isRestart);
           var confirmation = await ReadLineWithCancellationAsync (loopCts.Token);

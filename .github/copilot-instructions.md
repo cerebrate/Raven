@@ -54,6 +54,7 @@ The architecture uses a **session-based conversation model** where clients obtai
 - **Raven.Contracts** (shared DTOs): `CreateSessionRequest/Response`, `SendMessageRequest/Response`, `SessionInfoResponse`
 - All responses wrapped with `sessionId` for client state management
 - Streaming endpoint (`/api/chat/sessions/{sessionId}/messages/stream`) uses Server-Sent Events (SSE); non-streaming endpoint waits for full reply
+- Notification endpoint (`GET /api/chat/sessions/{sessionId}/notifications`) is a long-lived SSE channel for server-initiated push events; kept open between chat exchanges
 
 ## Build & Development
 
@@ -77,8 +78,9 @@ Raven.Contracts/                      # Shared DTOs for API contracts
 
 Raven.Client.Console/                 # Console REPL client
 ├── Program.cs                        # Generic Host setup, HttpClient factory, DI
-├── ConsoleLoop.cs                   # REPL main loop
+├── ConsoleLoop.cs                   # REPL main loop; monitors notification channel in background
 ├── Services/RavenApiClient.cs       # Typed HTTP client (uses BaseUrl from config)
+├── Services/ServerNotification.cs  # Record for notification-channel SSE events
 ├── Rendering/IConsoleRenderer       # Abstraction for terminal output (Spectre)
 ├── Rendering/SpectreConsoleRenderer # Production renderer; Status spinner + Markdown final render
 ├── Rendering/MarkdownToSpectreRenderer # Markdig AST → Spectre IRenderable converter
@@ -127,7 +129,7 @@ dotnet test
 ## Code Patterns & Conventions
 
 ### Dependency Injection
-- **Singletons**: `FoundryAgentConversationService`, workspace paths, `IWorkspacePaths`, `ISessionEventLog`, bus/dispatcher
+- **Singletons**: `FoundryAgentConversationService`, workspace paths, `IWorkspacePaths`, `ISessionEventLog`, `ISessionNotificationHub`, bus/dispatcher
 - **Transient**: Console loop, one-off command handlers, handlers registered to bus
 - **Scoped**: Not typically used (stateless HTTP handlers)
 - Configuration binding: Use `builder.Services.Configure<T>()` and inject `IOptions<T>` (see `FoundryOptions` in Program.cs)
@@ -157,6 +159,7 @@ dotnet test
 - Handlers inject services directly; DI resolves them
 - Use `Results` static factory (e.g., `Results.Ok(...)`, `Results.NotFound()`)
 - Streaming response: disable buffering with `context.Response.HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering()`
+- Notification endpoint SSE: write `": connected\n\n"` comment immediately after setting headers to flush to the client so `ResponseHeadersRead` returns before any events arrive
 - **Future planned endpoints**: `/api/tools`, `/api/heartbeat`, `/api/memory`, `/api/profile`
 
 ### HTTP Client (Typed)
@@ -199,6 +202,53 @@ Agent responses are rendered as formatted Markdown using a two-phase approach in
 - Track a message type registry with guardrails: 
   - Dispatch-time contract checks during dispatcher skeleton work
   - Publish-time contract checks while implementing bus producers
+
+### Session Notification Hub (Server-Push Channel)
+
+`ISessionNotificationHub` (in `Bus/Dispatch/`) is the general-purpose mechanism for
+sending server-initiated events to clients that do not currently have an active chat
+response stream open (idle clients at the REPL prompt between messages).
+
+**Key concepts**:
+- One channel per session, opened when the client calls `GET /api/chat/sessions/{id}/notifications`.
+- The endpoint sends an initial `": connected\n\n"` SSE comment to flush response headers
+  synchronously; subscribers then block inside `ReadAllAsync` until notifications arrive or
+  the channel is completed.
+- Only one subscriber per session is allowed at a time (`TrySubscribe` returns `false` if
+  already subscribed → endpoint returns 409).
+- The server calls `Complete(sessionId)` to close a session's channel cleanly (e.g. after a
+  shutdown broadcast so the HTTP response finalises).
+- `BroadcastAsync` fans out to all currently subscribed sessions; it handles `ChannelClosedException`
+  gracefully so a stale channel never prevents other sessions from receiving the notification.
+
+**Contracts** (`Bus/Contracts/`):
+- `IServerNotification` — empty marker; implement for each new push event type.
+- `ServerNotificationEnvelope(MessageMetadata Metadata, IServerNotification Notification)` —
+  typed wrapper; `MessageMetadata.Create(eventType)` stamps it with an ID and timestamp.
+- `ServerShutdownNotification(bool IsRestart)` — emitted on `/admin:shutdown` and
+  `/admin:restart` so idle clients exit cleanly without waiting for their next message.
+
+**Client side**:
+- `RavenApiClient.SubscribeToNotificationsAsync(sessionId, ct)` — opens the notification SSE
+  connection and yields `ServerNotification(string EventType, string Data)` values.
+  Returns an empty async enumerable on non-2xx (e.g. 503 during shutdown) so callers need
+  no special error handling.
+- `ConsoleLoop.MonitorNotificationsAsync` — background task started after session creation;
+  cancels the shared `loopCts` on `server_shutdown` so `ReadLine` is interrupted cleanly.
+  Unknown event types are silently ignored (forward-compatible).
+
+### Console REPL Command Categories
+
+REPL slash commands are split into two visually distinct categories:
+
+| Prefix | Terminal colour | Scope |
+|--------|-----------------|-------|
+| `/` | `steelblue1` | Session-local — affects only the current client |
+| `/admin:` | `yellow` | Server-wide — affects the server and all connected clients |
+
+**Rule**: any command whose effect extends beyond the current client session (restarts the
+server, affects other users' data, or changes server-wide state) must use the `/admin:`
+prefix. This makes the blast radius obvious in the help table and in shell transcripts.
 
 ## Testing
 
@@ -248,10 +298,12 @@ Workspace precedence (when implemented):
 
 ## Important Namespaces & Entry Points
 - `ArkaneSystems.Raven.Core.Program` — Bootstrap and Foundry config
-- `ArkaneSystems.Raven.Core.Api.Endpoints.ChatEndpoints` — HTTP route definitions
+- `ArkaneSystems.Raven.Core.Api.Endpoints.ChatEndpoints` — HTTP route definitions (chat + notification)
 - `ArkaneSystems.Raven.Core.AgentRuntime.Foundry.FoundryAgentConversationService` — Agent runtime logic
 - `ArkaneSystems.Raven.Core.Infrastructure.Filesystem` — Workspace path resolution and structure
-- `ArkaneSystems.Raven.Client.Console.ConsoleLoop` — REPL main loop
+- `ArkaneSystems.Raven.Core.Bus.Contracts` — `IServerNotification`, `ServerNotificationEnvelope`, `ServerShutdownNotification`
+- `ArkaneSystems.Raven.Core.Bus.Dispatch` — `ISessionNotificationHub`, `InMemorySessionNotificationHub`
+- `ArkaneSystems.Raven.Client.Console.ConsoleLoop` — REPL main loop + background notification monitor
 
 ## Strategic Roadmap: Unified Architecture Plan
 
@@ -433,9 +485,10 @@ Raven.Core/
 
 #### Adding a New Console Command
 1. Add command string constant and handler branch in `ConsoleLoop.RunAsync`
-2. Add corresponding method(s) to `IConsoleRenderer` and `SpectreConsoleRenderer`
-3. Add unit tests for renderer output
-4. Update `/help` table in `ShowHelp()`
+2. Choose the right prefix: `/` for session-local commands, `/admin:` for server-wide commands
+3. Add corresponding method(s) to `IConsoleRenderer` and `SpectreConsoleRenderer`
+4. Add unit tests for renderer output
+5. Update `/help` table in `ShowHelp()` (session commands in `steelblue1`, admin commands in `yellow`)
 
 #### Adding a Message Bus Handler
 1. Define typed message envelope in `Bus/Contracts/` subdomain
@@ -444,6 +497,17 @@ Raven.Core/
 4. Inject bus into caller; dispatch typed envelope
 5. Add correlation ID, session ID, user ID as envelope metadata
 6. Implement idempotency if applicable (use `MessageId` deduplication)
+
+#### Adding a New Server-Push Notification Type
+1. Add a new record implementing `IServerNotification` in `Bus/Contracts/`
+   e.g. `record MemoryConsolidatedNotification(int NewFactCount) : IServerNotification`
+2. Add a `case` arm in `ChatEndpoints.WriteNotificationSseEventAsync` to map it to an
+   SSE event name and data string
+3. Inject `ISessionNotificationHub` wherever the event is triggered and call
+   `BroadcastAsync(new ServerNotificationEnvelope(MessageMetadata.Create(...), notification), ct)`
+4. In the client, handle the new `EventType` string in `ConsoleLoop.MonitorNotificationsAsync`
+   (unknown types are silently ignored, so unhandled types are safe to add server-side first)
+5. Add integration tests: verify the new event appears in the SSE stream via `GetSubscribedSessionIds` polling
 
 ## Living Documentation & Continuous Updates
 
@@ -506,3 +570,6 @@ This creates a sustainable feedback loop:
 
 ### Console Client Behavior
 - On stale session notifications, warn the user and prompt before creating a replacement session instead of auto-recovering silently.
+- The client subscribes to the server notification channel (`GET /api/chat/sessions/{id}/notifications`) as a background task immediately after session creation. When a `server_shutdown` event arrives, a linked `CancellationTokenSource` (`loopCts`) is cancelled, breaking out of `ReadLine` cleanly without polling.
+- Admin commands use the `/admin:` prefix (e.g. `/admin:shutdown`, `/admin:restart`) and are styled yellow in the help table to distinguish them from session-local commands.
+- A shutdown triggered mid-stream (caught as `ServerShuttingDownException`) and one triggered via the notification channel (caught by `MonitorNotificationsAsync`) each result in `ShowAdminCommandAccepted` being called exactly once; the `serverShutdownHandled` flag prevents double-printing.

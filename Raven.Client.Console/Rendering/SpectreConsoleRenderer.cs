@@ -29,7 +29,7 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   public void ShowSessionStarted (string sessionId)
   {
     AnsiConsole.MarkupLine ($"[grey]Session:[/] [dim]{sessionId}[/]");
-    AnsiConsole.MarkupLine ("[grey]Type [/][steelblue1]/exit[/][grey] to quit, [/][steelblue1]/help[/][grey] for commands.[/]");
+    AnsiConsole.MarkupLine ("[grey]Type [/][steelblue1]/exit[/][grey] to quit, [/][steelblue1]/help[/][grey] for commands, [/][yellow]/admin:shutdown[/][grey] or [/][yellow]/admin:restart[/][grey] to manage the server.[/]");
     AnsiConsole.WriteLine ();
   }
 
@@ -40,12 +40,16 @@ public class SpectreConsoleRenderer : IConsoleRenderer
             .AddColumn(new TableColumn("[steelblue1]Command[/]").NoWrap())
             .AddColumn(new TableColumn("[grey]Description[/]"));
 
+    // Session commands
     table.AddRow ("[steelblue1]/new[/]", "Start a new session");
     table.AddRow ("[steelblue1]/history[/]", "Show current session info");
-    table.AddRow ("[steelblue1]/shutdown[/]", "Shut down the Raven.Core server (requires confirmation)");
-    table.AddRow ("[steelblue1]/restart[/]", "Restart the Raven.Core server (requires confirmation)");
     table.AddRow ("[steelblue1]/help[/]", "Show this help");
     table.AddRow ("[steelblue1]/exit[/]", "End the session and quit");
+
+    // Admin commands — styled yellow to emphasise that they affect the server
+    // and all connected clients, not just the current session.
+    table.AddRow ("[yellow]/admin:shutdown[/]", "[grey]Shut down the Raven.Core server (requires confirmation)[/]");
+    table.AddRow ("[yellow]/admin:restart[/]", "[grey]Restart the Raven.Core server (requires confirmation)[/]");
 
     AnsiConsole.Write (table);
     AnsiConsole.WriteLine ();
