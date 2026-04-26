@@ -8,7 +8,8 @@ public interface IShutdownCoordinator
   bool IsShutdownRequested { get; }
 
   // Initiates a graceful shutdown or restart. If restart is true, the process
-  // exits with ExitCodes.Restart so that the container orchestrator or wrapper
-  // script can restart it. Calling this method more than once is a no-op.
+  // exits with ExitCodes.Restart so that the entrypoint script can relaunch
+  // it in-place without exiting the pod. Calling this method more than once
+  // is a no-op.
   Task RequestShutdownAsync (bool restart, CancellationToken cancellationToken = default);
 }

@@ -5,16 +5,18 @@ using Microsoft.Extensions.Hosting;
 namespace ArkaneSystems.Raven.Core.Application.Admin;
 
 // Process exit codes used by Raven.Core.
-// The Docker entrypoint script or container restart policy uses these to
-// distinguish a deliberate restart from a clean shutdown.
+// The entrypoint script interprets these to decide what to do after the
+// dotnet process exits.
 public static class ExitCodes
 {
-  // Graceful shutdown — the container runner should NOT restart the process.
+  // Graceful shutdown — the entrypoint sleeps indefinitely so that
+  // Kubernetes does NOT restart the pod.
   public const int Shutdown = 0;
 
-  // Deliberate restart requested by an admin — the container runner SHOULD restart.
-  // Using 42 (rather than 1) makes the intent explicit and avoids confusion with
-  // generic non-zero exit codes produced by unhandled exceptions.
+  // Deliberate restart requested by an admin — the entrypoint relaunches
+  // the dotnet process in-place without exiting the pod, providing a fast
+  // configuration/skill reload. Using 42 (rather than 1) makes the intent
+  // explicit and avoids confusion with generic error exit codes.
   public const int Restart = 42;
 }
 
