@@ -31,9 +31,75 @@ public sealed class RavenApiClientTests
     Assert.Equal("alpha\n\nomega", chunk);
   }
 
-  private static RavenApiClient CreateClient (string payload)
+  // ── SubscribeToNotificationsAsync ─────────────────────────────────────────
+
+  [Fact]
+  public async Task SubscribeToNotificationsAsync_ParsesServerShutdownEvent ()
   {
-    var handler = new StubSseHttpMessageHandler(payload);
+    const string ssePayload = "event: server_shutdown\ndata: shutdown\n\n";
+    var client = CreateClient(ssePayload);
+
+    var notifications = await ReadNotificationsAsync(client);
+
+    var notification = Assert.Single(notifications);
+    Assert.Equal("server_shutdown", notification.EventType);
+    Assert.Equal("shutdown", notification.Data);
+  }
+
+  [Fact]
+  public async Task SubscribeToNotificationsAsync_ParsesServerRestartEvent ()
+  {
+    const string ssePayload = "event: server_shutdown\ndata: restart\n\n";
+    var client = CreateClient(ssePayload);
+
+    var notifications = await ReadNotificationsAsync(client);
+
+    var notification = Assert.Single(notifications);
+    Assert.Equal("server_shutdown", notification.EventType);
+    Assert.Equal("restart", notification.Data);
+  }
+
+  [Fact]
+  public async Task SubscribeToNotificationsAsync_ReturnsEmpty_ForNonSuccessResponse ()
+  {
+    var handler = new StubSseHttpMessageHandler(string.Empty, HttpStatusCode.ServiceUnavailable);
+    var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+    var client = new RavenApiClient(http);
+
+    var notifications = await ReadNotificationsAsync(client);
+
+    Assert.Empty(notifications);
+  }
+
+  [Fact]
+  public async Task SubscribeToNotificationsAsync_IgnoresUnknownEventTypes ()
+  {
+    const string ssePayload = "event: future_event\ndata: some-data\n\nevent: server_shutdown\ndata: shutdown\n\n";
+    var client = CreateClient(ssePayload);
+
+    var notifications = await ReadNotificationsAsync(client);
+
+    // Both events are surfaced; the caller is responsible for ignoring unknowns.
+    Assert.Equal(2, notifications.Count);
+    Assert.Equal("future_event", notifications[0].EventType);
+    Assert.Equal("server_shutdown", notifications[1].EventType);
+  }
+
+  [Fact]
+  public async Task SubscribeToNotificationsAsync_IgnoresCommentLines ()
+  {
+    const string ssePayload = ": keep-alive\nevent: server_shutdown\ndata: shutdown\n\n";
+    var client = CreateClient(ssePayload);
+
+    var notifications = await ReadNotificationsAsync(client);
+
+    var notification = Assert.Single(notifications);
+    Assert.Equal("server_shutdown", notification.EventType);
+  }
+
+  private static RavenApiClient CreateClient (string payload, HttpStatusCode status = HttpStatusCode.OK)
+  {
+    var handler = new StubSseHttpMessageHandler(payload, status);
     var http = new HttpClient(handler)
     {
       BaseAddress = new Uri("http://localhost")
@@ -54,13 +120,30 @@ public sealed class RavenApiClientTests
     return chunks;
   }
 
-  private sealed class StubSseHttpMessageHandler (string payload) : HttpMessageHandler
+  private static async Task<List<ServerNotification>> ReadNotificationsAsync (RavenApiClient client)
   {
-    private readonly string _payload = payload;
+    var notifications = new List<ServerNotification>();
 
+    await foreach (var n in client.SubscribeToNotificationsAsync("session-1", TestContext.Current.CancellationToken))
+    {
+      notifications.Add(n);
+    }
+
+    return notifications;
+  }
+
+  private sealed class StubSseHttpMessageHandler (
+      string payload,
+      HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
+  {
     protected override Task<HttpResponseMessage> SendAsync (HttpRequestMessage request, CancellationToken cancellationToken)
     {
-      var content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(_payload)));
+      if (statusCode != HttpStatusCode.OK)
+      {
+        return Task.FromResult(new HttpResponseMessage(statusCode));
+      }
+
+      var content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(payload)));
       content.Headers.ContentType = new MediaTypeHeaderValue("text/event-stream");
 
       var response = new HttpResponseMessage(HttpStatusCode.OK)

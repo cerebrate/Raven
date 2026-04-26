@@ -24,13 +24,16 @@ public static class ExitCodes
 // The first call to RequestShutdownAsync:
 //   1. Sets IsShutdownRequested so new streaming requests are rejected.
 //   2. Broadcasts a ServerShuttingDown event to every active SSE response stream
-//      so connected clients can display a warning before the connection drops.
-//   3. Sets Environment.ExitCode to communicate the intended action to the runner.
-//   4. Schedules StopApplication() after a 1-second grace period so the HTTP
+//      so mid-conversation clients can display a warning before the connection drops.
+//   3. Broadcasts a ServerShutdownNotification to every session notification channel
+//      so idle clients (not currently streaming) are also notified.
+//   4. Sets Environment.ExitCode to communicate the intended action to the runner.
+//   5. Schedules StopApplication() after a 1-second grace period so the HTTP
 //      response for the admin command can be flushed before the socket closes.
 // Subsequent calls are no-ops (idempotent).
 public sealed class ShutdownCoordinator (
     IResponseStreamEventHub streamHub,
+    ISessionNotificationHub notificationHub,
     IHostApplicationLifetime lifetime,
     ILogger<ShutdownCoordinator> logger) : IShutdownCoordinator
 {
@@ -73,9 +76,26 @@ public sealed class ShutdownCoordinator (
       }
     }
 
+    // Broadcast a shutdown notification to every session that has an active
+    // notification channel subscription, covering idle clients that are not
+    // currently streaming a chat response.
+    try
+    {
+      var notificationEnvelope = new ServerNotificationEnvelope (
+          MessageMetadata.Create ("server.shutdown.v1"),
+          new ServerShutdownNotification (restart));
+
+      await notificationHub.BroadcastAsync (notificationEnvelope, cancellationToken);
+    }
+    catch (Exception ex)
+    {
+      logger.LogWarning (ex, "Failed to broadcast {Action} notification to session notification channels.", action);
+    }
+
     logger.LogInformation (
-        "Notified {Count} active stream(s). Scheduling host stop with exit code {ExitCode}.",
+        "Notified {StreamCount} active response stream(s) and {NotificationCount} notification subscriber(s). Scheduling host stop with exit code {ExitCode}.",
         activeStreamIds.Count,
+        notificationHub.GetSubscribedSessionIds ().Count,
         restart ? ExitCodes.Restart : ExitCodes.Shutdown);
 
     // Set the process exit code before stopping the host so the OS / container

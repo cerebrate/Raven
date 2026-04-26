@@ -20,137 +20,217 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     state.SessionId = await client.CreateSessionAsync ();
     renderer.ShowSessionStarted (state.SessionId);
 
-    while (!cancellationToken.IsCancellationRequested)
+    // loopCts is cancelled either by the outer token (process shutdown) or by
+    // the notification listener when the server announces a shutdown/restart.
+    // Using a linked source means the REPL exits cleanly on either signal
+    // without needing to poll or check flags in every branch.
+    using var loopCts = CancellationTokenSource.CreateLinkedTokenSource (cancellationToken);
+
+    // Track a server-initiated shutdown/restart so we can display the right
+    // message after the loop exits. Null means no server notification arrived.
+    bool? serverShutdownIsRestart = null;
+
+    // Background task: subscribes to the server notification channel and
+    // cancels loopCts when a shutdown/restart notification arrives. This
+    // ensures idle clients (not currently streaming) are notified promptly.
+    var notificationTask = MonitorNotificationsAsync (
+        state.SessionId,
+        isRestart =>
+        {
+          serverShutdownIsRestart = isRestart;
+          loopCts.Cancel ();
+        },
+        loopCts.Token);
+
+    try
     {
-      renderer.WriteUserPrompt ();
-      var input = await ReadLineWithCancellationAsync (cancellationToken);
-
-      // null means the input stream was closed (e.g. Ctrl+Z / EOF).
-      if (input is null || input.Equals ("/exit", StringComparison.OrdinalIgnoreCase))
-        break;
-
-      if (string.IsNullOrWhiteSpace (input))
-        continue;
-
-      if (input.Equals ("/help", StringComparison.OrdinalIgnoreCase))
+      while (!loopCts.Token.IsCancellationRequested)
       {
-        renderer.ShowHelp ();
-        continue;
-      }
+        renderer.WriteUserPrompt ();
+        var input = await ReadLineWithCancellationAsync (loopCts.Token);
 
-      // /new: delete the current session server-side (best-effort — ignore
-      // errors in case it was already removed) then start a fresh one.
-      if (input.Equals ("/new", StringComparison.OrdinalIgnoreCase))
-      {
-        var oldSessionId = state.SessionId;
-        try
-        {
-          await client.DeleteSessionAsync (oldSessionId);
-        }
-        catch
-        {
-          // best-effort
-        }
-
-        state.SessionId = await client.CreateSessionAsync ();
-        renderer.ShowNewSession (oldSessionId, state.SessionId);
-        continue;
-      }
-
-      // /history: fetch and display metadata for the current session.
-      if (input.Equals ("/history", StringComparison.OrdinalIgnoreCase))
-      {
-        try
-        {
-          var info = await client.GetSessionAsync(state.SessionId);
-          if (info is not null)
-            renderer.ShowSessionInfo (info);
-          else
-            renderer.ShowError ("Session not found.");
-        }
-        catch (Exception ex)
-        {
-          renderer.ShowError (ex.Message);
-        }
-
-        continue;
-      }
-
-      // /shutdown and /restart: admin commands that stop or restart Raven.Core.
-      // Both require explicit confirmation ("yes") before the request is sent
-      // to avoid accidental disconnection of all connected clients.
-      if (input.Equals ("/shutdown", StringComparison.OrdinalIgnoreCase) ||
-          input.Equals ("/restart", StringComparison.OrdinalIgnoreCase))
-      {
-        var isRestart = input.Equals ("/restart", StringComparison.OrdinalIgnoreCase);
-
-        renderer.ShowAdminCommandConfirmationPrompt (isRestart);
-        var confirmation = await ReadLineWithCancellationAsync (cancellationToken);
-
-        if (cancellationToken.IsCancellationRequested)
+        // null means the input stream was closed (e.g. Ctrl+Z / EOF).
+        if (input is null || input.Equals ("/exit", StringComparison.OrdinalIgnoreCase))
           break;
 
-        if (!string.Equals (confirmation, "yes", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace (input))
+          continue;
+
+        if (input.Equals ("/help", StringComparison.OrdinalIgnoreCase))
         {
-          renderer.ShowWarning ("Cancelled.");
+          renderer.ShowHelp ();
           continue;
         }
 
+        // /new: delete the current session server-side (best-effort — ignore
+        // errors in case it was already removed) then start a fresh one.
+        if (input.Equals ("/new", StringComparison.OrdinalIgnoreCase))
+        {
+          var oldSessionId = state.SessionId;
+          try
+          {
+            await client.DeleteSessionAsync (oldSessionId);
+          }
+          catch
+          {
+            // best-effort
+          }
+
+          state.SessionId = await client.CreateSessionAsync ();
+          renderer.ShowNewSession (oldSessionId, state.SessionId);
+          continue;
+        }
+
+        // /history: fetch and display metadata for the current session.
+        if (input.Equals ("/history", StringComparison.OrdinalIgnoreCase))
+        {
+          try
+          {
+            var info = await client.GetSessionAsync(state.SessionId);
+            if (info is not null)
+              renderer.ShowSessionInfo (info);
+            else
+              renderer.ShowError ("Session not found.");
+          }
+          catch (Exception ex)
+          {
+            renderer.ShowError (ex.Message);
+          }
+
+          continue;
+        }
+
+        // /shutdown and /restart: admin commands that stop or restart Raven.Core.
+        // Both require explicit confirmation ("yes") before the request is sent
+        // to avoid accidental disconnection of all connected clients.
+        if (input.Equals ("/shutdown", StringComparison.OrdinalIgnoreCase) ||
+            input.Equals ("/restart", StringComparison.OrdinalIgnoreCase))
+        {
+          var isRestart = input.Equals ("/restart", StringComparison.OrdinalIgnoreCase);
+
+          renderer.ShowAdminCommandConfirmationPrompt (isRestart);
+          var confirmation = await ReadLineWithCancellationAsync (loopCts.Token);
+
+          if (loopCts.Token.IsCancellationRequested)
+            break;
+
+          if (!string.Equals (confirmation, "yes", StringComparison.OrdinalIgnoreCase))
+          {
+            renderer.ShowWarning ("Cancelled.");
+            continue;
+          }
+
+          try
+          {
+            if (isRestart)
+              await client.RequestRestartAsync ();
+            else
+              await client.RequestShutdownAsync ();
+
+            renderer.ShowAdminCommandAccepted (isRestart);
+          }
+          catch (Exception ex)
+          {
+            renderer.ShowError (ex.Message);
+            continue;
+          }
+
+          // The server is stopping; exit the client loop cleanly.
+          break;
+        }
+
+        // Any other input is treated as a chat message. The renderer owns the full
+        // response lifecycle: it streams chunks, accumulates them while showing
+        // status/progress during streaming, then renders the full Markdown response once.
         try
         {
-          if (isRestart)
-            await client.RequestRestartAsync ();
-          else
-            await client.RequestShutdownAsync ();
+          await renderer.RenderResponseStreamAsync (
+              client.StreamMessageAsync (state.SessionId, input, loopCts.Token),
+              loopCts.Token);
+        }
+        catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
+        {
+          renderer.ShowWarning ("The current session is stale and can no longer be used.");
+          renderer.ShowStaleSessionRecoveryPrompt ();
 
-          renderer.ShowAdminCommandAccepted (isRestart);
+          _ = await ReadLineWithCancellationAsync (loopCts.Token);
+          if (loopCts.Token.IsCancellationRequested)
+            break;
+
+          var oldSessionId = state.SessionId;
+          state.SessionId = await client.CreateSessionAsync ();
+          renderer.ShowNewSession (oldSessionId, state.SessionId);
+        }
+        catch (ServerShuttingDownException ex)
+        {
+          // The server is shutting down or restarting mid-stream. Display the
+          // appropriate message and exit the client loop. The notification task
+          // may also fire around the same time; the post-loop check below is
+          // guarded so the message is shown exactly once.
+          renderer.ShowAdminCommandAccepted (ex.IsRestart);
+          serverShutdownIsRestart = null; // mark as already handled
+          break;
         }
         catch (Exception ex)
         {
           renderer.ShowError (ex.Message);
-          continue;
         }
-
-        // The server is stopping; exit the client loop cleanly.
-        break;
       }
-
-      // Any other input is treated as a chat message. The renderer owns the full
-      // response lifecycle: it streams chunks, accumulates them while showing
-      // status/progress during streaming, then renders the full Markdown response once.
+    }
+    finally
+    {
+      // Cancel the notification task and wait for it to finish so it does not
+      // linger after RunAsync returns.
+      loopCts.Cancel ();
       try
       {
-        await renderer.RenderResponseStreamAsync (
-            client.StreamMessageAsync (state.SessionId, input, cancellationToken),
-            cancellationToken);
+        await notificationTask;
       }
-      catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
+      catch (OperationCanceledException)
       {
-        renderer.ShowWarning ("The current session is stale and can no longer be used.");
-        renderer.ShowStaleSessionRecoveryPrompt ();
-
-        _ = await ReadLineWithCancellationAsync (cancellationToken);
-        if (cancellationToken.IsCancellationRequested)
-          break;
-
-        var oldSessionId = state.SessionId;
-        state.SessionId = await client.CreateSessionAsync ();
-        renderer.ShowNewSession (oldSessionId, state.SessionId);
-      }
-      catch (ServerShuttingDownException ex)
-      {
-        // The server is shutting down or restarting mid-stream. Display the
-        // appropriate message and exit the client loop.
-        renderer.ShowAdminCommandAccepted (ex.IsRestart);
-        break;
-      }
-      catch (Exception ex)
-      {
-        renderer.ShowError (ex.Message);
+        // Expected when loopCts is cancelled.
       }
     }
 
+    // If the loop was interrupted by a server notification (and not already
+    // handled by ServerShuttingDownException above), show the appropriate message.
+    if (serverShutdownIsRestart.HasValue)
+      renderer.ShowAdminCommandAccepted (serverShutdownIsRestart.Value);
+
     renderer.ShowGoodbye ();
+  }
+
+  // Subscribes to the server notification channel and invokes onServerShutdown
+  // when a server_shutdown event is received. Connection errors are treated as
+  // graceful end-of-stream so the background task never crashes the REPL.
+  private async Task MonitorNotificationsAsync (
+      string sessionId,
+      Action<bool> onServerShutdown,
+      CancellationToken cancellationToken)
+  {
+    try
+    {
+      await foreach (var notification in client.SubscribeToNotificationsAsync (sessionId, cancellationToken))
+      {
+        if (string.Equals (notification.EventType, "server_shutdown", StringComparison.OrdinalIgnoreCase))
+        {
+          var isRestart = string.Equals (notification.Data, "restart", StringComparison.OrdinalIgnoreCase);
+          onServerShutdown (isRestart);
+          return; // one shutdown per session is enough
+        }
+        // Unknown event types are silently ignored — forward compatibility.
+      }
+    }
+    catch (OperationCanceledException)
+    {
+      // Normal exit when loopCts is cancelled.
+    }
+    catch (Exception)
+    {
+      // Connection errors (server restart, network issues) are silently swallowed
+      // so the background task never surfaces an unhandled exception. The user
+      // will discover the disconnection when they next send a message.
+    }
   }
 
   // Reads a line from the console, returning null immediately if the

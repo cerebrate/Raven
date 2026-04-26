@@ -145,7 +145,98 @@ public static class ChatEndpoints
       return deleted ? Results.NoContent () : Results.NotFound ();
     });
 
+    // GET /api/chat/sessions/{sessionId}/notifications
+    // Long-lived SSE endpoint for server-initiated push notifications.
+    // The client subscribes once per session and keeps the connection open
+    // indefinitely. The server pushes typed events through this channel at any
+    // time — not only in response to a chat request. Current event types:
+    //
+    //   server_shutdown  data: "restart" | "shutdown"
+    //     Emitted when an admin issues /shutdown or /restart. Idle clients
+    //     (those not currently streaming a chat response) receive this event
+    //     here; mid-stream clients receive it on their response stream instead.
+    //
+    // Future event types (examples):
+    //   memory_updated, heartbeat, background_task_result, …
+    //
+    // Returns 404 if the sessionId is not recognised.
+    // Returns 409 if a notification subscription already exists for this session
+    //   (the client should close the old connection before opening a new one).
+    // Returns 503 during an in-progress shutdown so new subscribers are not
+    //   added after the broadcast has already fired.
+    _ = group.MapGet ("/sessions/{sessionId}/notifications", async (
+        string sessionId,
+        IChatApplicationService chat,
+        ISessionNotificationHub notificationHub,
+        IShutdownCoordinator shutdownCoordinator,
+        HttpContext http,
+        CancellationToken cancellationToken) =>
+    {
+      if (shutdownCoordinator.IsShutdownRequested)
+      {
+        http.Response.StatusCode = 503;
+        return;
+      }
+
+      var session = await chat.GetSessionAsync(sessionId, cancellationToken);
+      if (session is null)
+      {
+        http.Response.StatusCode = 404;
+        return;
+      }
+
+      if (!notificationHub.TrySubscribe(sessionId))
+      {
+        // A notification channel is already open for this session.
+        // Return 409 so the client knows it must close the old connection first.
+        http.Response.StatusCode = 409;
+        return;
+      }
+
+      http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
+      http.Response.ContentType = "text/event-stream";
+      http.Response.Headers.CacheControl = "no-cache";
+
+      // Send an initial SSE comment to flush the response headers immediately.
+      // This lets the client distinguish "subscribed and waiting" from "waiting
+      // for headers", and makes the connection reliably detectable by tests and
+      // health-check tooling. SSE comment lines (starting with ':') are ignored
+      // by compliant parsers.
+      await http.Response.WriteAsync(": connected\n\n", cancellationToken);
+      await http.Response.Body.FlushAsync(cancellationToken);
+
+      try
+      {
+        await foreach (var envelope in notificationHub.ReadAllAsync(sessionId, cancellationToken))
+        {
+          await WriteNotificationSseEventAsync(http.Response, envelope.Notification, cancellationToken);
+        }
+      }
+      catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+      {
+        // Client disconnected — expected for long-lived SSE connections.
+      }
+    });
+
     return app;
+  }
+
+  private static async Task WriteNotificationSseEventAsync (
+      HttpResponse response,
+      IServerNotification notification,
+      CancellationToken cancellationToken)
+  {
+    var (eventName, data) = notification switch
+    {
+      // Shutdown/restart broadcast to idle clients (clients currently streaming
+      // a chat response receive this via WriteSseEventAsync instead).
+      ServerShutdownNotification shutdown => ("server_shutdown", shutdown.IsRestart ? "restart" : "shutdown"),
+      _ => ("unknown", string.Empty)
+    };
+
+    var normalizedData = data.Replace("\n", "\ndata: ");
+    await response.WriteAsync($"event: {eventName}\ndata: {normalizedData}\n\n", cancellationToken);
+    await response.Body.FlushAsync(cancellationToken);
   }
 
   private static string ResolveCorrelationId (HttpContext http)

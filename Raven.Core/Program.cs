@@ -103,6 +103,7 @@ try
   _ = builder.Services.AddScoped<IChatStreamBroker, ChatStreamBroker> ();
 
   _ = builder.Services.AddSingleton<IResponseStreamEventHub, InMemoryResponseStreamEventHub> ();
+  _ = builder.Services.AddSingleton<ISessionNotificationHub, InMemorySessionNotificationHub> ();
   _ = builder.Services.AddSingleton<IMessageTypeRegistry> (_ =>
   {
     var registry = new InMemoryMessageTypeRegistry();
