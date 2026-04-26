@@ -30,6 +30,11 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     // message after the loop exits. Null means no server notification arrived.
     bool? serverShutdownIsRestart = null;
 
+    // Tracks whether a server shutdown was already surfaced via
+    // ServerShuttingDownException (mid-stream case) so we don't show
+    // ShowAdminCommandAccepted twice.
+    bool serverShutdownHandled = false;
+
     // Background task: subscribes to the server notification channel and
     // cancels loopCts when a shutdown/restart notification arrives. This
     // ensures idle clients (not currently streaming) are notified promptly.
@@ -168,7 +173,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           // may also fire around the same time; the post-loop check below is
           // guarded so the message is shown exactly once.
           renderer.ShowAdminCommandAccepted (ex.IsRestart);
-          serverShutdownIsRestart = null; // mark as already handled
+          serverShutdownHandled = true;
           break;
         }
         catch (Exception ex)
@@ -194,7 +199,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
 
     // If the loop was interrupted by a server notification (and not already
     // handled by ServerShuttingDownException above), show the appropriate message.
-    if (serverShutdownIsRestart.HasValue)
+    if (serverShutdownIsRestart.HasValue && !serverShutdownHandled)
       renderer.ShowAdminCommandAccepted (serverShutdownIsRestart.Value);
 
     renderer.ShowGoodbye ();
