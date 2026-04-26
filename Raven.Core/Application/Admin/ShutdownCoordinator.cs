@@ -85,7 +85,15 @@ public sealed class ShutdownCoordinator (
     _ = Task.Run (async () =>
     {
       await Task.Delay (TimeSpan.FromSeconds (1), CancellationToken.None);
-      lifetime.StopApplication ();
+
+      try
+      {
+        lifetime.StopApplication ();
+      }
+      catch (Exception ex)
+      {
+        logger.LogError (ex, "Failed to stop the application during {Action}. The process may need to be terminated manually.", action);
+      }
     }, CancellationToken.None);
   }
 }
