@@ -12,4 +12,8 @@ public interface IResponseStreamEventHub
   ValueTask PublishAsync (ResponseStreamEventEnvelope envelope, CancellationToken cancellationToken);
 
   void Complete (string responseId);
+
+  // Returns the IDs of all response streams that are currently open.
+  // Used by ShutdownCoordinator to broadcast a shutdown notification to all active clients.
+  IReadOnlyCollection<string> GetActiveStreamIds ();
 }

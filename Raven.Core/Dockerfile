@@ -29,7 +29,9 @@ WORKDIR /app
 COPY --from=publish /app/publish .
 USER root
 RUN mkdir -p /data/workspace && chown -R $APP_UID /data/workspace
+COPY Raven.Core/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 ENV RAVEN_WORKSPACE_ROOT=/data/workspace
 VOLUME ["/data/workspace"]
 USER $APP_UID
-ENTRYPOINT ["dotnet", "Raven.Core.dll"]
+ENTRYPOINT ["/app/entrypoint.sh"]

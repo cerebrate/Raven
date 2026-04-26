@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ArkaneSystems.Raven.Contracts.Chat;
+using ArkaneSystems.Raven.Core.Application.Admin;
 using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
@@ -65,14 +66,24 @@ public static class ChatEndpoints
     // immediately so the client sees text appearing in real time.
     // Response buffering is disabled so bytes are not held by ASP.NET Core's
     // output buffer before being sent to the client.
+    // Returns 503 Service Unavailable if a shutdown or restart is in progress.
     _ = group.MapPost ("/sessions/{sessionId}/messages/stream", async (
         string sessionId,
         SendMessageRequest request,
         IChatStreamBroker streamBroker,
         IResponseStreamEventHub streamHub,
+        IShutdownCoordinator shutdownCoordinator,
         HttpContext http,
         CancellationToken cancellationToken) =>
     {
+      // Reject new streaming requests once shutdown/restart has been initiated.
+      // Active streams have already been notified via ServerShuttingDown events;
+      // this guards against new requests racing in during the grace period.
+      if (shutdownCoordinator.IsShutdownRequested)
+      {
+        http.Response.StatusCode = 503;
+        return;
+      }
       var requestContext = BuildRequestContext(http);
 
       var stream = await streamBroker.StartResponseStreamAsync(
@@ -134,7 +145,98 @@ public static class ChatEndpoints
       return deleted ? Results.NoContent () : Results.NotFound ();
     });
 
+    // GET /api/chat/sessions/{sessionId}/notifications
+    // Long-lived SSE endpoint for server-initiated push notifications.
+    // The client subscribes once per session and keeps the connection open
+    // indefinitely. The server pushes typed events through this channel at any
+    // time — not only in response to a chat request. Current event types:
+    //
+    //   server_shutdown  data: "restart" | "shutdown"
+    //     Emitted when an admin issues /shutdown or /restart. Idle clients
+    //     (those not currently streaming a chat response) receive this event
+    //     here; mid-stream clients receive it on their response stream instead.
+    //
+    // Future event types (examples):
+    //   memory_updated, heartbeat, background_task_result, …
+    //
+    // Returns 404 if the sessionId is not recognised.
+    // Returns 409 if a notification subscription already exists for this session
+    //   (the client should close the old connection before opening a new one).
+    // Returns 503 during an in-progress shutdown so new subscribers are not
+    //   added after the broadcast has already fired.
+    _ = group.MapGet ("/sessions/{sessionId}/notifications", async (
+        string sessionId,
+        IChatApplicationService chat,
+        ISessionNotificationHub notificationHub,
+        IShutdownCoordinator shutdownCoordinator,
+        HttpContext http,
+        CancellationToken cancellationToken) =>
+    {
+      if (shutdownCoordinator.IsShutdownRequested)
+      {
+        http.Response.StatusCode = 503;
+        return;
+      }
+
+      var session = await chat.GetSessionAsync(sessionId, cancellationToken);
+      if (session is null)
+      {
+        http.Response.StatusCode = 404;
+        return;
+      }
+
+      if (!notificationHub.TrySubscribe(sessionId))
+      {
+        // A notification channel is already open for this session.
+        // Return 409 so the client knows it must close the old connection first.
+        http.Response.StatusCode = 409;
+        return;
+      }
+
+      http.Features.Get<IHttpResponseBodyFeature> ()?.DisableBuffering ();
+      http.Response.ContentType = "text/event-stream";
+      http.Response.Headers.CacheControl = "no-cache";
+
+      // Send an initial SSE comment to flush the response headers immediately.
+      // This lets the client distinguish "subscribed and waiting" from "waiting
+      // for headers", and makes the connection reliably detectable by tests and
+      // health-check tooling. SSE comment lines (starting with ':') are ignored
+      // by compliant parsers.
+      await http.Response.WriteAsync(": connected\n\n", cancellationToken);
+      await http.Response.Body.FlushAsync(cancellationToken);
+
+      try
+      {
+        await foreach (var envelope in notificationHub.ReadAllAsync(sessionId, cancellationToken))
+        {
+          await WriteNotificationSseEventAsync(http.Response, envelope.Notification, cancellationToken);
+        }
+      }
+      catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+      {
+        // Client disconnected — expected for long-lived SSE connections.
+      }
+    });
+
     return app;
+  }
+
+  private static async Task WriteNotificationSseEventAsync (
+      HttpResponse response,
+      IServerNotification notification,
+      CancellationToken cancellationToken)
+  {
+    var (eventName, data) = notification switch
+    {
+      // Shutdown/restart broadcast to idle clients (clients currently streaming
+      // a chat response receive this via WriteSseEventAsync instead).
+      ServerShutdownNotification shutdown => ("server_shutdown", shutdown.IsRestart ? "restart" : "shutdown"),
+      _ => ("unknown", string.Empty)
+    };
+
+    var normalizedData = data.Replace("\n", "\ndata: ");
+    await response.WriteAsync($"event: {eventName}\ndata: {normalizedData}\n\n", cancellationToken);
+    await response.Body.FlushAsync(cancellationToken);
   }
 
   private static string ResolveCorrelationId (HttpContext http)
@@ -166,6 +268,10 @@ public static class ChatEndpoints
         "failed",
         JsonSerializer.Serialize(new StreamFailureEventData(failed.ErrorMessage, failed.ErrorCode, failed.IsRetryable))
       ),
+      // Broadcast when the server is preparing to shut down or restart.
+      // The data payload indicates whether a restart will follow so the client
+      // can display an appropriate message.
+      ServerShuttingDown shutdown => ("server_shutdown", shutdown.IsRestart ? "restart" : "shutdown"),
       _ => ("unknown", string.Empty)
     };
 

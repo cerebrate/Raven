@@ -90,6 +90,13 @@ public class RavenApiClient (HttpClient http)
             code: null,
             isRetryable: false);
       }
+      else if (string.Equals(eventName, "server_shutdown", StringComparison.OrdinalIgnoreCase))
+      {
+        // The server is about to shut down or restart. Stop consuming the stream
+        // and surface the event to the caller so they can display a warning.
+        var isRestart = string.Equals(payload, "restart", StringComparison.OrdinalIgnoreCase);
+        throw new ServerShuttingDownException(isRestart);
+      }
 
       await Task.CompletedTask;
     }
@@ -161,6 +168,103 @@ public class RavenApiClient (HttpClient http)
   {
     var response = await http.DeleteAsync($"/api/chat/sessions/{sessionId}");
     _ = response.EnsureSuccessStatusCode ();
+  }
+
+  // POST /api/admin/shutdown — request a graceful server shutdown.
+  // The server notifies all active sessions and stops after a short grace period.
+  public async Task RequestShutdownAsync ()
+  {
+    var response = await http.PostAsync ("/api/admin/shutdown", content: null);
+    _ = response.EnsureSuccessStatusCode ();
+  }
+
+  // POST /api/admin/restart — request a graceful server restart.
+  // The server notifies all active sessions, stops, and the container runner
+  // is expected to restart the process based on the exit code.
+  public async Task RequestRestartAsync ()
+  {
+    var response = await http.PostAsync ("/api/admin/restart", content: null);
+    _ = response.EnsureSuccessStatusCode ();
+  }
+
+  // GET /api/chat/sessions/{sessionId}/notifications — long-lived SSE endpoint.
+  // Yields ServerNotification values as the server pushes them. The connection
+  // is kept open until the CancellationToken fires or the server closes it.
+  // Callers should treat connection errors as graceful end-of-stream (the server
+  // may have restarted) rather than propagating them as exceptions.
+  public async IAsyncEnumerable<ServerNotification> SubscribeToNotificationsAsync (
+      string sessionId,
+      [EnumeratorCancellation] CancellationToken cancellationToken = default)
+  {
+    using var response = await http.GetAsync(
+        $"/api/chat/sessions/{sessionId}/notifications",
+        HttpCompletionOption.ResponseHeadersRead,
+        cancellationToken);
+
+    // Non-2xx (e.g. 404/409/503) — yield nothing; caller decides how to handle.
+    if (!response.IsSuccessStatusCode)
+      yield break;
+
+    using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+    using var reader = new StreamReader(stream);
+
+    var eventName = string.Empty;
+    var data = new System.Text.StringBuilder();
+    var hasDataLine = false;
+
+    async IAsyncEnumerable<ServerNotification> FlushFrameAsync (
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+      if (!hasDataLine || string.IsNullOrEmpty(eventName))
+        yield break;
+
+      yield return new ServerNotification(eventName, data.ToString());
+      await Task.CompletedTask;
+    }
+
+    while (!cancellationToken.IsCancellationRequested)
+    {
+      var line = await reader.ReadLineAsync(cancellationToken);
+      if (line is null)
+        break;
+
+      if (line.Length == 0)
+      {
+        await foreach (var n in FlushFrameAsync(cancellationToken))
+          yield return n;
+
+        eventName = string.Empty;
+        _ = data.Clear();
+        hasDataLine = false;
+        continue;
+      }
+
+      if (line.StartsWith(":", StringComparison.Ordinal))
+        continue;
+
+      if (line.StartsWith("event:", StringComparison.Ordinal))
+      {
+        eventName = line["event:".Length..].Trim();
+        continue;
+      }
+
+      if (line.StartsWith("data:", StringComparison.Ordinal))
+      {
+        var segment = line["data:".Length..];
+        if (segment.StartsWith(" ", StringComparison.Ordinal))
+          segment = segment[1..];
+
+        if (hasDataLine)
+          _ = data.Append('\n');
+
+        _ = data.Append(segment);
+        hasDataLine = true;
+      }
+    }
+
+    // Handle a final frame if the stream ends without a trailing blank line.
+    await foreach (var n in FlushFrameAsync(cancellationToken))
+      yield return n;
   }
 
   private static bool TryParseFailurePayload (string payload, out StreamFailureEventData failureData)

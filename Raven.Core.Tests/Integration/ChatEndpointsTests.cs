@@ -1,5 +1,7 @@
 using ArkaneSystems.Raven.Contracts.Chat;
 using ArkaneSystems.Raven.Core.AgentRuntime;
+using ArkaneSystems.Raven.Core.Bus.Contracts;
+using ArkaneSystems.Raven.Core.Bus.Dispatch;
 using ArkaneSystems.Raven.Core.Tests.Integration.TestHost;
 using ArkaneSystems.Raven.Core.Tests.Integration.TestHost.Fakes;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,7 +10,8 @@ using System.Net.Http.Json;
 
 namespace ArkaneSystems.Raven.Core.Tests.Integration;
 
-public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClassFixture<RavenCoreWebAppFactory>
+[Collection(IntegrationTestCollection.Name)]
+public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
 {
   private readonly RavenCoreWebAppFactory _factory = factory;
   private readonly HttpClient _client = factory.CreateClient();
@@ -376,6 +379,132 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory) : IClass
     var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
     Assert.NotNull (payload);
 
+    return payload.SessionId;
+  }
+}
+
+// Isolated tests for the session notification SSE endpoint.
+[Collection(IntegrationTestCollection.Name)]
+public sealed class NotificationEndpointTests (RavenCoreWebAppFactory factory)
+{
+  private readonly RavenCoreWebAppFactory _factory = factory;
+  private readonly HttpClient _client = factory.CreateClient();
+
+  [Fact]
+  public async Task Notifications_ReturnsNotFound_ForUnknownSession ()
+  {
+    var response = await this._client.GetAsync(
+        $"/api/chat/sessions/{Guid.NewGuid()}/notifications",
+        TestContext.Current.CancellationToken);
+
+    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+  }
+
+  [Fact]
+  public async Task Notifications_ReturnsConflict_WhenAlreadySubscribed ()
+  {
+    var hub = this._factory.Services.GetRequiredService<ISessionNotificationHub>();
+    var sessionId = await this.CreateSessionAsync();
+
+    // Hold the subscription slot directly via the hub — equivalent to having
+    // a live HTTP connection open for this session. The hub is a singleton so
+    // the same instance is used by both the test and the server endpoint.
+    Assert.True(hub.TrySubscribe(sessionId));
+
+    try
+    {
+      // The HTTP endpoint should find the slot is already taken and return 409.
+      var response = await this._client.GetAsync(
+          $"/api/chat/sessions/{sessionId}/notifications",
+          TestContext.Current.CancellationToken);
+
+      Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+    finally
+    {
+      hub.Complete(sessionId);
+    }
+  }
+
+  [Fact]
+  public async Task Notifications_DeliversServerShutdownEvent_ToSubscribedSession ()
+  {
+    var fakeShutdown = this._factory.Services.GetRequiredService<FakeShutdownCoordinator>();
+    fakeShutdown.Reset();
+
+    var sessionId = await this.CreateSessionAsync();
+    var hub = this._factory.Services.GetRequiredService<ISessionNotificationHub>();
+
+    // Start the GET request WITHOUT awaiting — this sends the HTTP request and
+    // lets the server endpoint run concurrently.
+    using var subCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    var getTask = this._client.GetAsync(
+        $"/api/chat/sessions/{sessionId}/notifications",
+        subCts.Token);
+
+    // Poll the hub until the session appears as a subscriber. This is
+    // deterministic: the endpoint calls TrySubscribe synchronously in its
+    // request body, so once the session ID appears in the hub we know the
+    // server is inside the await foreach and ready to receive notifications.
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+    while (!hub.GetSubscribedSessionIds().Contains(sessionId))
+    {
+      if (DateTimeOffset.UtcNow > deadline)
+        throw new TimeoutException("Session never appeared in notification hub within 5 seconds.");
+
+      await Task.Delay(TimeSpan.FromMilliseconds(10), TestContext.Current.CancellationToken);
+    }
+
+    // Push a shutdown notification and immediately complete the channel so the
+    // endpoint's await foreach exits and the HTTP response is finalised.
+    var envelope = new ServerNotificationEnvelope(
+        MessageMetadata.Create("server.shutdown.v1"),
+        new ServerShutdownNotification(IsRestart: false));
+
+    await hub.BroadcastAsync(envelope, TestContext.Current.CancellationToken);
+    hub.Complete(sessionId);
+
+    // Now await the HTTP response (which should be available immediately).
+    using var response = await getTask;
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    Assert.StartsWith("text/event-stream", response.Content.Headers.ContentType?.MediaType, StringComparison.Ordinal);
+
+    var ssePayload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+    Assert.Contains("event: server_shutdown", ssePayload, StringComparison.Ordinal);
+    Assert.Contains("data: shutdown", ssePayload, StringComparison.Ordinal);
+  }
+
+  [Fact]
+  public async Task Notifications_Returns503_WhenShutdownInProgress ()
+  {
+    var fakeShutdown = this._factory.Services.GetRequiredService<FakeShutdownCoordinator>();
+    fakeShutdown.Reset();
+
+    await fakeShutdown.RequestShutdownAsync(restart: false, TestContext.Current.CancellationToken);
+
+    try
+    {
+      var sessionId = await this.CreateSessionAsync();
+
+      var response = await this._client.GetAsync(
+          $"/api/chat/sessions/{sessionId}/notifications",
+          TestContext.Current.CancellationToken);
+
+      Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+    finally
+    {
+      fakeShutdown.Reset();
+    }
+  }
+
+  private async Task<string> CreateSessionAsync ()
+  {
+    var response = await this._client.PostAsJsonAsync("/api/chat/sessions", new { });
+    _ = response.EnsureSuccessStatusCode();
+    var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
+    Assert.NotNull(payload);
     return payload.SessionId;
   }
 }

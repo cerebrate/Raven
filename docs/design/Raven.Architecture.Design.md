@@ -94,7 +94,60 @@ Startup behavior:
 - in-proc bounded channel dispatcher
 - dead-letter sink
 - message type registry + contract checks
-- in-memory stream hub for SSE fan-out
+- in-memory stream hub for SSE fan-out (`IResponseStreamEventHub`)
+- in-memory session notification hub for server-push events (`ISessionNotificationHub`)
+
+### Session notification channel (implemented)
+
+A long-lived SSE endpoint that clients subscribe to once per session and keep open
+between chat exchanges. Unlike response-stream SSE (which only exists while a chat
+response is in flight), the notification channel is always open and allows the server
+to push typed events to both active and idle clients.
+
+**Endpoint**: `GET /api/chat/sessions/{sessionId}/notifications`
+- Returns `404` for unknown sessions, `409` if a subscription already exists for the
+  session (only one subscriber per session is allowed; the client should close the old
+  connection before opening a new one), `503` when a shutdown is already in progress.
+- Writes an initial `": connected"` SSE comment to flush response headers immediately.
+- Streams `ServerNotificationEnvelope` events until the client disconnects or the server
+  calls `ISessionNotificationHub.Complete(sessionId)`.
+
+**Key contracts** (all in `Raven.Core/Bus/Contracts/`):
+- `IServerNotification` — marker interface; implement to add a new push notification type.
+- `ServerNotificationEnvelope(MessageMetadata, IServerNotification)` — typed wrapper
+  analogous to `ResponseStreamEventEnvelope`.
+- `ServerShutdownNotification(bool IsRestart)` — emitted during `/admin:shutdown` and
+  `/admin:restart` so idle clients (not currently streaming) also receive the warning.
+
+**Hub** (`Raven.Core/Bus/Dispatch/`):
+- `ISessionNotificationHub` — subscribe, publish to one session, broadcast to all,
+  complete (close) a session's channel, enumerate active subscribers.
+- `InMemorySessionNotificationHub` — `ConcurrentDictionary`-backed implementation;
+  uses `Channel.CreateUnbounded` per session; best-effort broadcast with graceful
+  `ChannelClosedException` handling.
+
+**ShutdownCoordinator integration**: `RequestShutdownAsync` now broadcasts a
+`ServerShutdownNotification` to all subscribed sessions after it has notified the active
+response streams. This guarantees every client — mid-stream or idle — receives the
+shutdown warning before the host stops.
+
+**Client side** (`Raven.Client.Console`):
+- `RavenApiClient.SubscribeToNotificationsAsync(sessionId)` — consumes the SSE channel
+  and yields `ServerNotification(EventType, Data)` values; returns empty on non-2xx.
+- `ConsoleLoop` starts a background `MonitorNotificationsAsync` task immediately after
+  session creation; on `server_shutdown` it cancels a linked `CancellationTokenSource`
+  that the REPL loop uses, breaking out of `ReadLine` cleanly.
+
+**SSE event format** (notification channel):
+```
+event: server_shutdown
+data: shutdown
+
+event: server_shutdown
+data: restart
+```
+Future event types are defined by adding an `IServerNotification` implementation and a
+`case` arm in `ChatEndpoints.WriteNotificationSseEventAsync`.
 
 ### Session append-only event log
 Per-session append-only NDJSON stream:
@@ -128,6 +181,7 @@ Current event types include:
 - `IChatApplicationService -> ChatApplicationService` (Scoped)
 - `IChatStreamBroker -> ChatStreamBroker` (Scoped)
 - `IResponseStreamEventHub -> InMemoryResponseStreamEventHub` (Singleton)
+- `ISessionNotificationHub -> InMemorySessionNotificationHub` (Singleton)
 - `IMessageTypeRegistry -> InMemoryMessageTypeRegistry` (Singleton)
 - `IMessageHandler<ResponseStreamEventEnvelope> -> ResponseStreamEventForwardingHandler` (Singleton)
 - `IDeadLetterSink -> LoggingDeadLetterSink` (Singleton)
@@ -1018,12 +1072,41 @@ Configuration (all under `spawning` config section):
 
 ## 11) API Surface
 
+### Console client REPL commands
+
+The console client supports two categories of slash commands, visually and semantically
+distinct:
+
+| Prefix | Style | Scope |
+|--------|-------|-------|
+| `/` (no prefix) | steelblue — session commands | affect only the current client session |
+| `/admin:` | yellow — admin commands | affect the server and all connected clients |
+
+Current commands:
+
+| Command | Category | Description |
+|---------|----------|-------------|
+| `/new` | session | Delete current session and start a fresh one |
+| `/history` | session | Show current session metadata |
+| `/help` | session | List available commands |
+| `/exit` | session | End the session and quit the client |
+| `/admin:shutdown` | admin | Gracefully stop the server (requires `yes` confirmation) |
+| `/admin:restart` | admin | Gracefully restart the server (requires `yes` confirmation) |
+
+The `/admin:` prefix rule: any command whose effect extends beyond the current client
+session (affects the server process, other users' sessions, or server-side state) must
+use the `/admin:` prefix. This makes the blast radius obvious at a glance both in the
+help table and in shell transcripts.
+
 Implemented baseline:
 - `POST /api/chat/sessions`
 - `POST /api/chat/sessions/{sessionId}/messages` (with attachment support)
 - `POST /api/chat/sessions/{sessionId}/messages/stream` (with attachment support)
 - `GET /api/chat/sessions/{sessionId}` (returns token usage summary)
 - `DELETE /api/chat/sessions/{sessionId}`
+- `GET /api/chat/sessions/{sessionId}/notifications` (long-lived SSE notification channel)
+- `POST /api/admin/shutdown`
+- `POST /api/admin/restart`
 
 Planned follow-on groups:
 - `/api/tools` (registry, search, health, circuit-break state)
