@@ -279,6 +279,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
 
     renderer.ShowGoodbye (state.SessionId);
   }
+
   // Subscribes to the server notification channel and invokes onServerShutdown
   // when a server_shutdown event is received. Connection errors are treated as
   // graceful end-of-stream so the background task never crashes the REPL.

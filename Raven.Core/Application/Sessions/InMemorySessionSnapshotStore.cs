@@ -38,7 +38,6 @@ public sealed class InMemorySessionSnapshotStore : ISessionSnapshotStore
     {
       cancellationToken.ThrowIfCancellationRequested ();
       yield return snapshot;
-      await Task.CompletedTask;
     }
   }
 }
