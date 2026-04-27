@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Client.Console.Models;
 using ArkaneSystems.Raven.Client.Console.Rendering;
 using ArkaneSystems.Raven.Client.Console.Services;
+using ArkaneSystems.Raven.Contracts.Chat;
 
 namespace ArkaneSystems.Raven.Client.Console;
 
@@ -10,15 +11,76 @@ namespace ArkaneSystems.Raven.Client.Console;
 // focused on flow control rather than presentation.
 public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRenderer renderer)
 {
-  public async Task RunAsync (CancellationToken cancellationToken = default)
+  // resumeSessionId is set when the user passes --resume <id> on the command line.
+  // When present the REPL skips creating a new session and attaches to the
+  // existing one instead.
+  //
+  // selectMode is set when the user passes --select on the command line.
+  // When true and no resumeSessionId is provided, the REPL shows a numbered
+  // session-selection menu and lets the user pick before entering the loop.
+  public async Task RunAsync (string? resumeSessionId = null, bool selectMode = false, CancellationToken cancellationToken = default)
   {
     renderer.ShowBanner ();
 
-    // Create a session with Raven.Core before entering the loop.
-    // This registers a new conversation with the agent and persists
-    // the session record to SQLite.
-    state.SessionId = await client.CreateSessionAsync ();
-    renderer.ShowSessionStarted (state.SessionId);
+    bool isResumed = false;
+    string? sessionTitle = null;
+
+    if (!string.IsNullOrWhiteSpace (resumeSessionId))
+    {
+      // Validate the session exists before attaching to it.
+      var info = await client.GetSessionAsync (resumeSessionId);
+      if (info is null)
+      {
+        renderer.ShowError ($"Session '{resumeSessionId}' not found. Starting a new session instead.");
+        state.SessionId = await client.CreateSessionAsync ();
+      }
+      else
+      {
+        state.SessionId = resumeSessionId;
+        sessionTitle = info.Title;
+        isResumed = true;
+      }
+    }
+    else if (selectMode)
+    {
+      // --select: fetch existing sessions and let the user pick one or start new.
+      var sessions = await client.ListSessionsAsync ();
+      renderer.ShowSessionSelectionMenu (sessions);
+
+      if (sessions.Count > 0)
+      {
+        var raw = await ReadLineWithCancellationAsync (cancellationToken);
+        var chosenSession = ResolveSelectionChoice (raw, sessions);
+        if (chosenSession is not null)
+        {
+          state.SessionId = chosenSession.SessionId;
+          sessionTitle = chosenSession.Title;
+          isResumed = true;
+        }
+        else
+        {
+          // 0, empty, or out-of-range → new session
+          state.SessionId = await client.CreateSessionAsync ();
+        }
+      }
+      else
+      {
+        // No sessions available; create a new one immediately.
+        state.SessionId = await client.CreateSessionAsync ();
+      }
+    }
+    else
+    {
+      // Create a session with Raven.Core before entering the loop.
+      // This registers a new conversation with the agent and persists
+      // the session record to SQLite.
+      state.SessionId = await client.CreateSessionAsync ();
+    }
+
+    // Show the session title (if known) centered between the Figlet and the
+    // "AI Assistant" separator Rule, then the session-started line.
+    renderer.ShowSessionHeader (sessionTitle);
+    renderer.ShowSessionStarted (state.SessionId, isResumed, sessionTitle);
 
     // loopCts is cancelled either by the outer token (process shutdown) or by
     // the notification listener when the server announces a shutdown/restart.
@@ -82,7 +144,59 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           }
 
           state.SessionId = await client.CreateSessionAsync ();
+          sessionTitle = null;   // new session starts without a title
+          isResumed    = false;  // session was created, not resumed
           renderer.ShowNewSession (oldSessionId, state.SessionId);
+          continue;
+        }
+
+        // /sessions: list all resumable sessions on the server.
+        if (input.Equals ("/sessions", StringComparison.OrdinalIgnoreCase))
+        {
+          try
+          {
+            var sessions = await client.ListSessionsAsync ();
+            renderer.ShowSessionList (sessions);
+          }
+          catch (Exception ex)
+          {
+            renderer.ShowError (ex.Message);
+          }
+
+          continue;
+        }
+
+        // /resume <sessionId>: switch the current REPL to an existing session.
+        // The notification monitor continues on the current channel since
+        // shutdown events are broadcast to all active sessions regardless.
+        if (input.StartsWith ("/resume ", StringComparison.OrdinalIgnoreCase))
+        {
+          var targetId = input["/resume ".Length..].Trim ();
+          if (string.IsNullOrWhiteSpace (targetId))
+          {
+            renderer.ShowWarning ("Usage: /resume <session-id>");
+            continue;
+          }
+
+          try
+          {
+            var info = await client.GetSessionAsync (targetId);
+            if (info is null)
+            {
+              renderer.ShowError ($"Session '{targetId}' not found.");
+            }
+            else
+            {
+              state.SessionId = targetId;
+              sessionTitle = info.Title;
+              renderer.ShowSessionStarted (state.SessionId, isResumed: true, info.Title);
+            }
+          }
+          catch (Exception ex)
+          {
+            renderer.ShowError (ex.Message);
+          }
+
           continue;
         }
 
@@ -154,6 +268,27 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           await renderer.RenderResponseStreamAsync (
               client.StreamMessageAsync (state.SessionId, input, loopCts.Token),
               loopCts.Token);
+
+          // After each successful exchange, check whether the server has generated
+          // (or updated) the session title.  This typically fires after the first
+          // exchange for new sessions.  The check is best-effort: failures are
+          // silently swallowed so they never interrupt the conversation flow.
+          if (sessionTitle is null)
+          {
+            try
+            {
+              var refreshed = await client.GetSessionAsync (state.SessionId);
+              if (!string.IsNullOrWhiteSpace (refreshed?.Title))
+              {
+                sessionTitle = refreshed.Title;
+                renderer.ShowTitleSet (sessionTitle);
+              }
+            }
+            catch
+            {
+              // best-effort — ignore any error; title will be shown next time
+            }
+          }
         }
         catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
         {
@@ -204,7 +339,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     if (serverShutdownIsRestart.HasValue && !serverShutdownHandled)
       renderer.ShowAdminCommandAccepted (serverShutdownIsRestart.Value);
 
-    renderer.ShowGoodbye ();
+    renderer.ShowGoodbye (state.SessionId, sessionTitle);
   }
 
   // Subscribes to the server notification channel and invokes onServerShutdown
@@ -253,5 +388,22 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     await Task.WhenAny (readTask, Task.Delay (Timeout.Infinite, cancellationToken));
 
     return cancellationToken.IsCancellationRequested ? null : await readTask;
+  }
+
+  // Parses the raw input from a session-selection menu and returns the chosen
+  // session summary, or null if the user chose to start a new session (input
+  // is empty, "0", or an out-of-range number).
+  private static SessionSummary? ResolveSelectionChoice (string? raw, IReadOnlyList<SessionSummary> sessions)
+  {
+    if (string.IsNullOrWhiteSpace (raw))
+      return null;
+
+    if (!int.TryParse (raw.Trim (), out var choice))
+      return null;
+
+    if (choice < 1 || choice > sessions.Count)
+      return null;
+
+    return sessions[choice - 1];
   }
 }

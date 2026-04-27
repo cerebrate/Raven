@@ -15,7 +15,8 @@ public sealed class ChatApplicationServiceTests
     var conversations = new StubAgentConversationService();
     var sessions = new InMemorySessionStore();
     var eventLog = new InMemorySessionEventLog();
-    var sut = new ChatApplicationService(conversations, sessions, eventLog, NullLogger<ChatApplicationService>.Instance);
+    var snapshotStore = new InMemorySessionSnapshotStore();
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullConversationTitleService.Instance, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
@@ -36,7 +37,8 @@ public sealed class ChatApplicationServiceTests
     var conversations = new StubAgentConversationService();
     var sessions = new InMemorySessionStore();
     var eventLog = new InMemorySessionEventLog();
-    var sut = new ChatApplicationService(conversations, sessions, eventLog, NullLogger<ChatApplicationService>.Instance);
+    var snapshotStore = new InMemorySessionSnapshotStore();
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullConversationTitleService.Instance, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
@@ -49,6 +51,16 @@ public sealed class ChatApplicationServiceTests
 
     Assert.Equal (sessionId, error.SessionId);
     Assert.False (await sessions.SessionExistsAsync (sessionId));
+  }
+
+  // Stub IConversationTitleService that always returns null (no title generated).
+  // Used in unit tests that do not exercise title-generation behaviour.
+  private sealed class NullConversationTitleService : IConversationTitleService
+  {
+    public static readonly NullConversationTitleService Instance = new ();
+
+    public Task<string?> GenerateTitleAsync (string userMessage, string agentReply, CancellationToken cancellationToken = default) =>
+        Task.FromResult<string?> (null);
   }
 
   private sealed class StubAgentConversationService : IAgentConversationService

@@ -21,6 +21,21 @@ public static class ChatEndpoints
     var group = app.MapGroup("/api/chat");
     _ = group.AddEndpointFilter(new CorrelationScopeEndpointFilter());
 
+    // GET /api/chat/sessions
+    // Returns all sessions that currently have a valid snapshot (resumable sessions).
+    // The list is ordered most-recently-snapshotted first so the client can
+    // immediately display the most-recent session at the top of a selection menu.
+    _ = group.MapGet ("/sessions", async (
+        IChatApplicationService chat,
+        CancellationToken cancellationToken) =>
+    {
+      var snapshots = await chat.ListSessionsAsync(cancellationToken);
+      var summaries = snapshots
+          .Select (static s => new SessionSummary (s.SessionId, s.CreatedAt, s.LastActivityAt, s.SnapshotAt, s.Title))
+          .ToList ();
+      return Results.Ok (new ListSessionsResponse (summaries));
+    });
+
     // POST /api/chat/sessions
     // Creates a new conversation with the agent and a matching session record.
     // Returns the sessionId the client should use in all subsequent calls.
@@ -129,7 +144,7 @@ public static class ChatEndpoints
       var info = await chat.GetSessionAsync(sessionId, cancellationToken);
       return info is null
         ? Results.NotFound ()
-        : Results.Ok (new SessionInfoResponse (info.SessionId, info.CreatedAt, info.LastActivityAt));
+        : Results.Ok (new SessionInfoResponse (info.SessionId, info.CreatedAt, info.LastActivityAt, info.Title));
     });
 
     // DELETE /api/chat/sessions/{sessionId}

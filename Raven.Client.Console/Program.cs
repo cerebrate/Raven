@@ -56,9 +56,49 @@ var host = builder.Build();
 // Wait for Raven.Core to report healthy instead of relying on a fixed startup delay.
 await WaitForRavenCoreReadyAsync (ravenCoreBaseUri);
 
+// Parse the optional --resume <sessionId> command-line argument.
+// When provided, the REPL skips creating a new session and attaches to the
+// existing one instead so the conversation context is preserved.
+string? resumeSessionId = ParseResumeArg (args);
+
+// Parse the optional --select flag.
+// When provided, the REPL displays the list of resumable sessions at startup
+// and lets the user pick one (or choose to start fresh) before entering the
+// main loop. This avoids creating a session that will never be used.
+bool selectMode = ParseSelectFlag (args);
+
 // Resolve and run the REPL loop directly — no hosted service wrapper needed
 // because this is a single-purpose foreground process.
-await host.Services.GetRequiredService<ConsoleLoop> ().RunAsync ();
+await host.Services.GetRequiredService<ConsoleLoop> ().RunAsync (resumeSessionId, selectMode);
+
+// Looks for --resume <id> in the raw args array.
+// Returns the session ID if found; otherwise null.
+static string? ParseResumeArg (string[] args)
+{
+  for (int i = 0; i < args.Length - 1; i++)
+  {
+    if (string.Equals (args[i], "--resume", StringComparison.OrdinalIgnoreCase))
+    {
+      var id = args[i + 1];
+      return string.IsNullOrWhiteSpace (id) ? null : id;
+    }
+  }
+
+  return null;
+}
+
+// Looks for --select in the raw args array.
+// Returns true if found; otherwise false.
+static bool ParseSelectFlag (string[] args)
+{
+  foreach (var arg in args)
+  {
+    if (string.Equals (arg, "--select", StringComparison.OrdinalIgnoreCase))
+      return true;
+  }
+
+  return false;
+}
 
 static async Task WaitForRavenCoreReadyAsync (Uri baseAddress, CancellationToken cancellationToken = default)
 {

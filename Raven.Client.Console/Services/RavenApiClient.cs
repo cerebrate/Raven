@@ -11,6 +11,22 @@ namespace ArkaneSystems.Raven.Client.Console.Services;
 // caught and displayed by ConsoleLoop via IConsoleRenderer.ShowError.
 public class RavenApiClient (HttpClient http)
 {
+  // GET /api/chat/sessions — list all resumable sessions with snapshots.
+  // Returns an empty list if no sessions exist or the request fails.
+  public async Task<IReadOnlyList<SessionSummary>> ListSessionsAsync ()
+  {
+    var response = await http.GetAsync("/api/chat/sessions");
+    if (!response.IsSuccessStatusCode)
+      return [];
+
+    var result = await response.Content.ReadFromJsonAsync<ListSessionsResponse> ();
+    return result?.Sessions ?? [];
+  }
+
+  // GET /api/chat/sessions/{sessionId} — check a session exists before resuming.
+  // Returns the session info if found, or null if not.
+  // (Alias exposed for clarity in resume workflows; backed by the existing GetSessionAsync.)
+
   // POST /api/chat/sessions — creates a new session and returns its ID.
   public async Task<string> CreateSessionAsync ()
   {

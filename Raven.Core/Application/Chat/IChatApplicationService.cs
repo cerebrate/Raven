@@ -30,4 +30,8 @@ public interface IChatApplicationService
 
   // Deletes a session. Returns false when the session is unknown.
   Task<bool> DeleteSessionAsync (string sessionId, CancellationToken cancellationToken = default);
+
+  // Returns all sessions that currently have a valid snapshot (resumable sessions).
+  // Ordered by SnapshotAt descending so the most-recent session appears first.
+  Task<IReadOnlyList<SessionSnapshot>> ListSessionsAsync (CancellationToken cancellationToken = default);
 }

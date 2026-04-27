@@ -14,8 +14,8 @@ The architecture uses a **session-based conversation model** where clients obtai
 - Two implementations: `SqliteSessionStore` (production) and `InMemorySessionStore` (tests)
 - **ISessionEventLog** persists append-only per-session NDJSON events at `{workspace}/sessions/logs/{sessionId}.events.ndjson`
 - **Key design principle**: Keep session ID stable and abstract across agent infrastructure swaps
-- Workspace stores: `{workspace}/sessions/db/raven.db` (SQLite), `{workspace}/sessions/logs`, `{workspace}/sessions/snapshots`
-- **Architecture decision**: Use invalidate-and-recover now for stale session-to-conversation mappings, with planned evolution to replay-based restore once session log/snapshot replay prerequisites exist.
+- Workspace stores: `{workspace}/sessions/db/raven.db` (SQLite), `{workspace}/sessions/logs`, `{workspace}/sessions/snapshots`, `{workspace}/sessions/agent-sessions`
+- **Architecture decision**: Session persistence uses `AIAgent.SerializeSessionAsync` / `DeserializeSessionAsync` to round-trip `AgentSession` state to `{workspace}/sessions/agent-sessions/{conversationId}.agent.json`. On restart, `FoundryAgentConversationService` transparently restores sessions from disk before falling back to `ConversationNotFoundException`.
 
 ### Workspace Path Resolution (Priority Order)
 1. `Raven:Workspace:RootPath` in `appsettings.json`
@@ -35,6 +35,7 @@ The architecture uses a **session-based conversation model** where clients obtai
       raven.db                    # SQLite session store (migrated to workspace v1)
     logs/
     snapshots/
+    agent-sessions/               # Serialized AgentSession state for restart resume
   memory/                          # [P1] Long-term memory, facts, vectors
   heartbeat/                       # [P2] Background job state and schedules
   artifacts/
@@ -47,8 +48,18 @@ The architecture uses a **session-based conversation model** where clients obtai
 ### Agent Runtime (Foundry Integration)
 - **FoundryAgentConversationService** (Singleton) wraps Azure OpenAI SDK + Microsoft.Agents.AI
 - Uses `ConcurrentDictionary<string, AgentSession>` to map conversation IDs to Foundry session state (thread-safe for concurrent requests)
+- After every successful message exchange, serializes `AgentSession` via `AIAgent.SerializeSessionAsync` and persists to `IAgentSessionStore` / `FileAgentSessionStore`
+- On cold start, transparently restores sessions via `AIAgent.DeserializeSessionAsync` when a `conversationId` is missing from the in-memory dictionary
 - Configuration via `FoundryOptions`: endpoint, deployment name (default: `gpt-4o-mini`), system prompt, agent name
 - Credentials: `DefaultAzureCredential` (CLI login in dev, managed identity in prod)
+- **API choice**: Chat Completions (not Assistants API) — see design doc section 12 for the full rationale
+
+### One-Off Agent Completions (IAgentService)
+- **IAgentService** provides stateless, sessionless completions via `CompleteAsync(systemPrompt, userMessage, ct)` — no conversation thread is created or modified
+- **FoundryAgentService** implements it with a direct `ChatClient.CompleteChatAsync` call (two-message array: system + user); Singleton, thread-safe
+- Use this for any server-internal AI task (classification, generation, formatting) that must not touch a user's context window
+- **Design rule**: never invoke inside the hot path of a user-visible response — call only after delivery or from background tasks
+- **Current consumer**: `ConversationTitleService` → `IConversationTitleService` — generates a ≤6-word title from the first exchange; best-effort (non-cancellation failures logged at Warning, returns null)
 
 ### API Contracts Layer
 - **Raven.Contracts** (shared DTOs): `CreateSessionRequest/Response`, `SendMessageRequest/Response`, `SessionInfoResponse`
@@ -302,6 +313,8 @@ Workspace precedence (when implemented):
 - `ArkaneSystems.Raven.Core.Program` — Bootstrap and Foundry config
 - `ArkaneSystems.Raven.Core.Api.Endpoints.ChatEndpoints` — HTTP route definitions (chat + notification)
 - `ArkaneSystems.Raven.Core.AgentRuntime.Foundry.FoundryAgentConversationService` — Agent runtime logic
+- `ArkaneSystems.Raven.Core.AgentRuntime.IAgentService` — Stateless one-off completion interface; `FoundryAgentService` is the Foundry implementation
+- `ArkaneSystems.Raven.Core.Application.Chat.IConversationTitleService` — AI-generated session titles; `ConversationTitleService` consumes `IAgentService`
 - `ArkaneSystems.Raven.Core.Infrastructure.Filesystem` — Workspace path resolution and structure
 - `ArkaneSystems.Raven.Core.Bus.Contracts` — `IServerNotification`, `ServerNotificationEnvelope`, `ServerShutdownNotification`
 - `ArkaneSystems.Raven.Core.Bus.Dispatch` — `ISessionNotificationHub`, `InMemorySessionNotificationHub`
@@ -461,6 +474,13 @@ Raven.Core/
 1. Update `Foundry.SystemPrompt` in `appsettings.json` or via user-secrets
 2. No code change needed; restart the API server
 3. New conversations pick up the new prompt
+
+### Using IAgentService for a New One-Off AI Task
+1. Inject `IAgentService` into the consuming service
+2. Write a focused `systemPrompt` that constrains the model to the task (see `ConversationTitleService.TitleSystemPrompt` as a reference)
+3. Cap `userMessage` size if the input is unbounded (e.g., `text.Length > 500` → truncate + `"…"`)
+4. Wrap the call in try/catch; propagate `OperationCanceledException`, log and swallow everything else — all `IAgentService` tasks are best-effort
+5. Register the new service as Singleton in `Program.cs`; provide a null/stub double in integration test factory (`RavenCoreWebAppFactory`)
 
 ### Adding a New Session-Related Endpoint
 1. Add route handler in `ChatEndpoints.MapChatEndpoints()`

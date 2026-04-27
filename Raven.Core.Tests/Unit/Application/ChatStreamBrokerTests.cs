@@ -180,6 +180,9 @@ public sealed class ChatStreamBrokerTests
 
     public Task<bool> DeleteSessionAsync (string sessionId, CancellationToken cancellationToken = default) =>
         Task.FromResult (true);
+
+    public Task<IReadOnlyList<SessionSnapshot>> ListSessionsAsync (CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<SessionSnapshot>> ([]);
   }
 
   private sealed class ForwardingMessageBus (IMessageHandler<ResponseStreamEventEnvelope> handler) : IMessageBus

@@ -78,5 +78,45 @@ public sealed record SessionEventEnvelope (
 
 // Application-layer value type carrying the metadata we hold about a session.
 // Distinct from SessionInfoResponse (the HTTP contract) so the two can evolve
-// independently.
-public record SessionInfo (string SessionId, DateTimeOffset CreatedAt, DateTimeOffset? LastActivityAt);
+// independently. Title is populated after the first message exchange.
+public record SessionInfo (string SessionId, DateTimeOffset CreatedAt, DateTimeOffset? LastActivityAt, string? Title = null);
+
+// Snapshot of a session at a point in time. Used to fast-path session restore on
+// server restart without replaying the full event log. Stored as a JSON file at
+// {workspace}/sessions/snapshots/{sessionId}.snapshot.json.
+//
+// SchemaVersion guards forward compatibility — readers check this before
+// attempting to deserialize known fields.
+public record SessionSnapshot (
+  string          SessionId,
+  string          ConversationId,
+  DateTimeOffset  CreatedAt,
+  DateTimeOffset? LastActivityAt,
+  DateTimeOffset  SnapshotAt,
+  long            EventLogSequence,
+  int             SchemaVersion = 1,
+  string?         Title         = null);
+
+// Snapshot store: persists, loads, and invalidates session snapshots.
+// Snapshots are written after every successful message so the most recent
+// state is always recoverable without replaying the full event log.
+//
+// Invalidation removes the snapshot file; a missing file means "no valid
+// snapshot" and the caller must fall back to event-log replay or create a
+// fresh session.
+public interface ISessionSnapshotStore
+{
+  // Atomically persist (or replace) the snapshot for the given session.
+  Task SaveSnapshotAsync (SessionSnapshot snapshot, CancellationToken cancellationToken = default);
+
+  // Load the latest snapshot for the given session, or null if none exists.
+  Task<SessionSnapshot?> LoadSnapshotAsync (string sessionId, CancellationToken cancellationToken = default);
+
+  // Delete the snapshot file for the given session. Returns true if a file
+  // was removed, false if no snapshot was found (idempotent).
+  Task<bool> InvalidateSnapshotAsync (string sessionId, CancellationToken cancellationToken = default);
+
+  // Enumerate all stored snapshots in the snapshots directory.
+  // Used by the client-facing session-list endpoint.
+  IAsyncEnumerable<SessionSnapshot> ListSnapshotsAsync (CancellationToken cancellationToken = default);
+}

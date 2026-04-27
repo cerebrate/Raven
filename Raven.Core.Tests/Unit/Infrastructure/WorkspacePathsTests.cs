@@ -57,10 +57,11 @@ public sealed class WorkspacePathsTests
       Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "db")));
       Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "logs")));
       Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "snapshots")));
+      Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "sessions", path3: "agent-sessions")));
       Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "config")));
       Assert.True (Directory.Exists (Path.Combine (path1: workspaceRoot, path2: "tmp")));
-      Assert.Equal (expected: 11, actual: report.TotalDirectories);
-      Assert.Equal (expected: 11, actual: report.CreatedDirectories.Count);
+      Assert.Equal (expected: 12, actual: report.TotalDirectories);
+      Assert.Equal (expected: 12, actual: report.CreatedDirectories.Count);
       Assert.Empty (report.ExistingDirectories);
     }
     finally

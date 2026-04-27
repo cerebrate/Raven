@@ -95,10 +95,20 @@ try
   // objects that should survive for the process lifetime.
   _ = builder.Services.AddSingleton<IAgentConversationService, FoundryAgentConversationService> ();
 
+  // IAgentService provides stateless one-off completions for server-internal
+  // tasks (e.g. title generation) that must not touch any user session.
+  _ = builder.Services.AddSingleton<IAgentService, FoundryAgentService> ();
+
+  // Agent session store persists serialized AgentSession state so the service
+  // can restore conversations transparently after a process restart.
+  _ = builder.Services.AddSingleton<IAgentSessionStore, FileAgentSessionStore> ();
+
   // The session store is scoped so it aligns with the EF DbContext lifetime
   // used by SqliteSessionStore. Each HTTP request gets its own instance.
   _ = builder.Services.AddScoped<ISessionStore, SqliteSessionStore> ();
   _ = builder.Services.AddSingleton<ISessionEventLog, FileSessionEventLog> ();
+  _ = builder.Services.AddSingleton<ISessionSnapshotStore, FileSessionSnapshotStore> ();
+  _ = builder.Services.AddSingleton<IConversationTitleService, ConversationTitleService> ();
   _ = builder.Services.AddScoped<IChatApplicationService, ChatApplicationService> ();
   _ = builder.Services.AddScoped<IChatStreamBroker, ChatStreamBroker> ();
 

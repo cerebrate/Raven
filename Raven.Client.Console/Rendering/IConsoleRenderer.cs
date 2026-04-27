@@ -8,11 +8,23 @@ namespace ArkaneSystems.Raven.Client.Console.Rendering;
 // without touching the real terminal.
 public interface IConsoleRenderer
 {
-  // Display the application banner on startup.
+  // Display the application banner on startup (Figlet only; the separator Rule
+  // is deferred until the session title is known — see ShowSessionHeader).
   void ShowBanner ();
 
+  // Display the session-title area: an optional centered title (if non-null/empty)
+  // followed by the horizontal "AI Assistant" separator Rule.
+  // Called once after session creation/resumption, immediately before ShowSessionStarted.
+  void ShowSessionHeader (string? title);
+
   // Confirm that a session has been established and show the session ID.
-  void ShowSessionStarted (string sessionId);
+  // When resuming an existing session, showResumed is true so the display
+  // message reflects "resumed" rather than "started".
+  void ShowSessionStarted (string sessionId, bool isResumed = false);
+
+  // Overload that also displays the session title for resumed sessions so
+  // the user knows which conversation they rejoined without inspecting the ID.
+  void ShowSessionStarted (string sessionId, bool isResumed, string? title);
 
   // Display the list of available slash-commands.
   void ShowHelp ();
@@ -31,17 +43,33 @@ public interface IConsoleRenderer
   // Display a warning message.
   void ShowWarning (string message);
 
+  // Notify the user that a session title was generated or updated.
+  // Called inline in the chat flow after the first exchange (or any title regeneration).
+  void ShowTitleSet (string title);
+
   // Prompt shown when stale-session recovery requires creating a new session.
   void ShowStaleSessionRecoveryPrompt ();
 
-  // Display the farewell message when the user exits.
-  void ShowGoodbye ();
+  // Display the farewell message when the user exits, showing the session ID so
+  // the user can resume the same session in a future invocation.
+  void ShowGoodbye (string? sessionId = null);
+
+  // Overload that also shows the session title when available.
+  void ShowGoodbye (string? sessionId, string? title);
 
   // Display session metadata (used by the /history command).
   void ShowSessionInfo (SessionInfoResponse info);
 
   // Confirm that the old session was closed and a new one has started.
   void ShowNewSession (string oldSessionId, string newSessionId);
+
+  // Display a list of resumable sessions for the /sessions command.
+  void ShowSessionList (IReadOnlyList<SessionSummary> sessions);
+
+  // Display a numbered session-selection menu at startup (for --select mode).
+  // Prints the list and a prompt asking the user to enter a number or press
+  // Enter to start a new session.  ConsoleLoop reads the raw input.
+  void ShowSessionSelectionMenu (IReadOnlyList<SessionSummary> sessions);
 
   // Prompt shown when the user enters /admin:shutdown or /admin:restart to obtain
   // confirmation before the command is sent to the server.
