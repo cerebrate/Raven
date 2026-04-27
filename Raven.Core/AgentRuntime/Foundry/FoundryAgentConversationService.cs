@@ -7,6 +7,7 @@ using OpenAI.Chat;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace ArkaneSystems.Raven.Core.AgentRuntime.Foundry;
 
@@ -45,8 +46,14 @@ public class FoundryAgentConversationService : IAgentConversationService
 
   // JsonSerializerOptions used consistently across serialize/deserialize calls.
   // Web defaults (camelCase, case-insensitive) match the SDK's own preferences.
+  // Explicitly setting TypeInfoResolver keeps serialization working when
+  // reflection-based metadata is disabled by runtime defaults or trimming.
   private static readonly JsonSerializerOptions SerializerOptions =
-      new (JsonSerializerDefaults.Web) { WriteIndented = false };
+      new (JsonSerializerDefaults.Web)
+      {
+        WriteIndented = false,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver ()
+      };
 
   public FoundryAgentConversationService (
       IOptions<FoundryOptions>                    options,
