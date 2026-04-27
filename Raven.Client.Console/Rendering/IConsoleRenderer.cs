@@ -1,4 +1,22 @@
+#region header
+
+// Raven.Client.Console - IConsoleRenderer.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-27 12:05 PM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Contracts.Chat;
+using JetBrains.Annotations;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Client.Console.Rendering;
 

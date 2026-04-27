@@ -1,7 +1,27 @@
-using System.Text.Json;
+#region header
+
+// Raven.Client.Console - RavenApiClient.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-27 12:05 PM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Contracts.Chat;
+using JetBrains.Annotations;
+using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Client.Console.Services;
 
@@ -15,11 +35,15 @@ public class RavenApiClient (HttpClient http)
   // Returns an empty list if no sessions exist or the request fails.
   public async Task<IReadOnlyList<SessionSummary>> ListSessionsAsync ()
   {
-    var response = await http.GetAsync("/api/chat/sessions");
-    if (!response.IsSuccessStatusCode)
-      return [];
+    HttpResponseMessage response = await http.GetAsync ("/api/chat/sessions");
 
-    var result = await response.Content.ReadFromJsonAsync<ListSessionsResponse> ();
+    if (!response.IsSuccessStatusCode)
+    {
+      return [];
+    }
+
+    ListSessionsResponse? result = await response.Content.ReadFromJsonAsync<ListSessionsResponse> ();
+
     return result?.Sessions ?? [];
   }
 
@@ -30,9 +54,11 @@ public class RavenApiClient (HttpClient http)
   // POST /api/chat/sessions — creates a new session and returns its ID.
   public async Task<string> CreateSessionAsync ()
   {
-    var response = await http.PostAsJsonAsync("/api/chat/sessions", new CreateSessionRequest());
+    HttpResponseMessage response =
+      await http.PostAsJsonAsync (requestUri: "/api/chat/sessions", value: new CreateSessionRequest ());
     _ = response.EnsureSuccessStatusCode ();
-    var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
+    CreateSessionResponse? result = await response.Content.ReadFromJsonAsync<CreateSessionResponse> ();
+
     return result!.SessionId;
   }
 
@@ -40,11 +66,11 @@ public class RavenApiClient (HttpClient http)
   // Waits for the complete reply. Kept for potential non-streaming use cases.
   public async Task<string> SendMessageAsync (string sessionId, string content)
   {
-    var response = await http.PostAsJsonAsync(
-            $"/api/chat/sessions/{sessionId}/messages",
-            new SendMessageRequest(content));
+    HttpResponseMessage response = await http.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages",
+                                                               value: new SendMessageRequest (content));
     _ = response.EnsureSuccessStatusCode ();
-    var result = await response.Content.ReadFromJsonAsync<SendMessageResponse>();
+    SendMessageResponse? result = await response.Content.ReadFromJsonAsync<SendMessageResponse> ();
+
     return result!.Content;
   }
 
@@ -52,29 +78,29 @@ public class RavenApiClient (HttpClient http)
   // Uses HttpCompletionOption.ResponseHeadersRead so the body is not buffered:
   // the connection stays open and we read lines incrementally as they arrive.
   // Each yielded string is one text chunk from the agent's response.
-  public async IAsyncEnumerable<string> StreamMessageAsync (
-      string sessionId,
-      string content,
-      [EnumeratorCancellation] CancellationToken cancellationToken = default)
+  public async IAsyncEnumerable<string> StreamMessageAsync (string                                     sessionId,
+                                                            string                                     content,
+                                                            [EnumeratorCancellation] CancellationToken cancellationToken = default)
   {
-    var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"/api/chat/sessions/{sessionId}/messages/stream")
-    {
-      Content = JsonContent.Create(new SendMessageRequest(content))
-    };
+    HttpRequestMessage request = new HttpRequestMessage (method: HttpMethod.Post,
+                                                         requestUri: $"/api/chat/sessions/{sessionId}/messages/stream")
+                                 {
+                                   Content = JsonContent.Create (new SendMessageRequest (content))
+                                 };
 
     // ResponseHeadersRead: return as soon as headers are received, leaving
     // the body stream open for incremental reading.
-    using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+    using HttpResponseMessage response = await http.SendAsync (request: request,
+                                                               completionOption: HttpCompletionOption.ResponseHeadersRead,
+                                                               cancellationToken: cancellationToken);
     _ = response.EnsureSuccessStatusCode ();
 
-    using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-    using var reader = new StreamReader(stream);
+    using Stream       stream = await response.Content.ReadAsStreamAsync (cancellationToken);
+    using StreamReader reader = new StreamReader (stream);
 
-    var eventName = "delta"; // default keeps compatibility with legacy data-only SSE frames.
-    var data = new System.Text.StringBuilder();
-    var hasDataLine = false;
+    string        eventName   = "delta"; // default keeps compatibility with legacy data-only SSE frames.
+    StringBuilder data        = new StringBuilder ();
+    bool          hasDataLine = false;
 
     async IAsyncEnumerable<string> FlushFrameAsync ([EnumeratorCancellation] CancellationToken ct)
     {
@@ -83,35 +109,37 @@ public class RavenApiClient (HttpClient http)
         yield break;
       }
 
-      var payload = data.ToString();
+      string payload = data.ToString ();
 
-      if (string.Equals(eventName, "delta", StringComparison.OrdinalIgnoreCase))
+      if (string.Equals (a: eventName, b: "delta", comparisonType: StringComparison.OrdinalIgnoreCase))
       {
-        if (!string.IsNullOrEmpty(payload))
-          yield return payload;
-      }
-      else if (string.Equals(eventName, "failed", StringComparison.OrdinalIgnoreCase))
-      {
-        if (TryParseFailurePayload(payload, out var failureData))
+        if (!string.IsNullOrEmpty (payload))
         {
-          var message = string.IsNullOrWhiteSpace(failureData.Message)
-            ? "Streaming failed."
-            : failureData.Message;
+          yield return payload;
+        }
+      }
+      else if (string.Equals (a: eventName, b: "failed", comparisonType: StringComparison.OrdinalIgnoreCase))
+      {
+        if (TryParseFailurePayload (payload: payload, failureData: out StreamFailureEventData failureData))
+        {
+          string message = string.IsNullOrWhiteSpace (failureData.Message)
+                             ? "Streaming failed."
+                             : failureData.Message;
 
-          throw new StreamEventFailedException(message, failureData.Code, failureData.IsRetryable);
+          throw new StreamEventFailedException (message: message, code: failureData.Code, isRetryable: failureData.IsRetryable);
         }
 
-        throw new StreamEventFailedException(
-            string.IsNullOrWhiteSpace(payload) ? "Streaming failed." : payload,
-            code: null,
-            isRetryable: false);
+        throw new StreamEventFailedException (message: string.IsNullOrWhiteSpace (payload) ? "Streaming failed." : payload,
+                                              code: null,
+                                              isRetryable: false);
       }
-      else if (string.Equals(eventName, "server_shutdown", StringComparison.OrdinalIgnoreCase))
+      else if (string.Equals (a: eventName, b: "server_shutdown", comparisonType: StringComparison.OrdinalIgnoreCase))
       {
         // The server is about to shut down or restart. Stop consuming the stream
         // and surface the event to the caller so they can display a warning.
-        var isRestart = string.Equals(payload, "restart", StringComparison.OrdinalIgnoreCase);
-        throw new ServerShuttingDownException(isRestart);
+        bool isRestart = string.Equals (a: payload, b: "restart", comparisonType: StringComparison.OrdinalIgnoreCase);
+
+        throw new ServerShuttingDownException (isRestart);
       }
 
       await Task.CompletedTask;
@@ -119,50 +147,64 @@ public class RavenApiClient (HttpClient http)
 
     while (!cancellationToken.IsCancellationRequested)
     {
-      var line = await reader.ReadLineAsync(cancellationToken);
+      string? line = await reader.ReadLineAsync (cancellationToken);
+
       if (line is null)
+      {
         break;
+      }
 
       // Blank line terminates one SSE event frame.
       if (line.Length == 0)
       {
-        await foreach (var chunk in FlushFrameAsync(cancellationToken))
+        await foreach (string chunk in FlushFrameAsync (cancellationToken))
+        {
           yield return chunk;
+        }
 
-        eventName = "delta";
-        _ = data.Clear();
+        eventName   = "delta";
+        _           = data.Clear ();
         hasDataLine = false;
+
         continue;
       }
 
-      if (line.StartsWith(":", StringComparison.Ordinal))
-        continue;
-
-      if (line.StartsWith("event:", StringComparison.Ordinal))
+      if (line.StartsWith (value: ":", comparisonType: StringComparison.Ordinal))
       {
-        eventName = line["event:".Length..].Trim();
         continue;
       }
 
-      if (line.StartsWith("data:", StringComparison.Ordinal))
+      if (line.StartsWith (value: "event:", comparisonType: StringComparison.Ordinal))
       {
-        var segment = line["data:".Length..];
-        if (segment.StartsWith(" ", StringComparison.Ordinal))
+        eventName = line["event:".Length..].Trim ();
+
+        continue;
+      }
+
+      if (line.StartsWith (value: "data:", comparisonType: StringComparison.Ordinal))
+      {
+        string segment = line["data:".Length..];
+
+        if (segment.StartsWith (value: " ", comparisonType: StringComparison.Ordinal))
         {
           segment = segment[1..];
         }
 
         if (hasDataLine)
-          _ = data.Append('\n');
+        {
+          _ = data.Append ('\n');
+        }
 
-        _ = data.Append(segment);
+        _           = data.Append (segment);
         hasDataLine = true;
       }
     }
 
     // Handle a final frame if the stream ends without a trailing blank line.
-    await foreach (var chunk in FlushFrameAsync(cancellationToken))
+    await foreach (string chunk in FlushFrameAsync (cancellationToken))
+    {
       yield return chunk;
+    }
   }
 
   // GET /api/chat/sessions/{sessionId} — fetch session metadata.
@@ -170,11 +212,15 @@ public class RavenApiClient (HttpClient http)
   // so the caller can decide how to handle a missing session gracefully.
   public async Task<SessionInfoResponse?> GetSessionAsync (string sessionId)
   {
-    var response = await http.GetAsync($"/api/chat/sessions/{sessionId}");
-    if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+    HttpResponseMessage response = await http.GetAsync ($"/api/chat/sessions/{sessionId}");
+
+    if (response.StatusCode == HttpStatusCode.NotFound)
+    {
       return null;
+    }
 
     _ = response.EnsureSuccessStatusCode ();
+
     return await response.Content.ReadFromJsonAsync<SessionInfoResponse> ();
   }
 
@@ -182,7 +228,7 @@ public class RavenApiClient (HttpClient http)
   // Called by /new before creating a replacement session.
   public async Task DeleteSessionAsync (string sessionId)
   {
-    var response = await http.DeleteAsync($"/api/chat/sessions/{sessionId}");
+    HttpResponseMessage response = await http.DeleteAsync ($"/api/chat/sessions/{sessionId}");
     _ = response.EnsureSuccessStatusCode ();
   }
 
@@ -190,7 +236,7 @@ public class RavenApiClient (HttpClient http)
   // The server notifies all active sessions and stops after a short grace period.
   public async Task RequestShutdownAsync ()
   {
-    var response = await http.PostAsync ("/api/admin/shutdown", content: null);
+    HttpResponseMessage response = await http.PostAsync (requestUri: "/api/admin/shutdown", content: null);
     _ = response.EnsureSuccessStatusCode ();
   }
 
@@ -199,7 +245,7 @@ public class RavenApiClient (HttpClient http)
   // is expected to restart the process based on the exit code.
   public async Task RequestRestartAsync ()
   {
-    var response = await http.PostAsync ("/api/admin/restart", content: null);
+    HttpResponseMessage response = await http.PostAsync (requestUri: "/api/admin/restart", content: null);
     _ = response.EnsureSuccessStatusCode ();
   }
 
@@ -208,99 +254,120 @@ public class RavenApiClient (HttpClient http)
   // is kept open until the CancellationToken fires or the server closes it.
   // Callers should treat connection errors as graceful end-of-stream (the server
   // may have restarted) rather than propagating them as exceptions.
-  public async IAsyncEnumerable<ServerNotification> SubscribeToNotificationsAsync (
-      string sessionId,
-      [EnumeratorCancellation] CancellationToken cancellationToken = default)
+  public async IAsyncEnumerable<ServerNotification> SubscribeToNotificationsAsync (string sessionId,
+                                                                                   [EnumeratorCancellation]
+                                                                                   CancellationToken cancellationToken = default)
   {
-    using var response = await http.GetAsync(
-        $"/api/chat/sessions/{sessionId}/notifications",
-        HttpCompletionOption.ResponseHeadersRead,
-        cancellationToken);
+    using HttpResponseMessage response = await http.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}/notifications",
+                                                              completionOption: HttpCompletionOption.ResponseHeadersRead,
+                                                              cancellationToken: cancellationToken);
 
     // Non-2xx (e.g. 404/409/503) — yield nothing; caller decides how to handle.
     if (!response.IsSuccessStatusCode)
-      yield break;
-
-    using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-    using var reader = new StreamReader(stream);
-
-    var eventName = string.Empty;
-    var data = new System.Text.StringBuilder();
-    var hasDataLine = false;
-
-    async IAsyncEnumerable<ServerNotification> FlushFrameAsync (
-        [EnumeratorCancellation] CancellationToken ct)
     {
-      if (!hasDataLine || string.IsNullOrEmpty(eventName))
-        yield break;
+      yield break;
+    }
 
-      yield return new ServerNotification(eventName, data.ToString());
+    using Stream       stream = await response.Content.ReadAsStreamAsync (cancellationToken);
+    using StreamReader reader = new StreamReader (stream);
+
+    string        eventName   = string.Empty;
+    StringBuilder data        = new StringBuilder ();
+    bool          hasDataLine = false;
+
+    async IAsyncEnumerable<ServerNotification> FlushFrameAsync ([EnumeratorCancellation] CancellationToken ct)
+    {
+      if (!hasDataLine || string.IsNullOrEmpty (eventName))
+      {
+        yield break;
+      }
+
+      yield return new ServerNotification (EventType: eventName, Data: data.ToString ());
+
       await Task.CompletedTask;
     }
 
     while (!cancellationToken.IsCancellationRequested)
     {
-      var line = await reader.ReadLineAsync(cancellationToken);
+      string? line = await reader.ReadLineAsync (cancellationToken);
+
       if (line is null)
+      {
         break;
+      }
 
       if (line.Length == 0)
       {
-        await foreach (var n in FlushFrameAsync(cancellationToken))
+        await foreach (ServerNotification n in FlushFrameAsync (cancellationToken))
+        {
           yield return n;
+        }
 
-        eventName = string.Empty;
-        _ = data.Clear();
+        eventName   = string.Empty;
+        _           = data.Clear ();
         hasDataLine = false;
+
         continue;
       }
 
-      if (line.StartsWith(":", StringComparison.Ordinal))
-        continue;
-
-      if (line.StartsWith("event:", StringComparison.Ordinal))
+      if (line.StartsWith (value: ":", comparisonType: StringComparison.Ordinal))
       {
-        eventName = line["event:".Length..].Trim();
         continue;
       }
 
-      if (line.StartsWith("data:", StringComparison.Ordinal))
+      if (line.StartsWith (value: "event:", comparisonType: StringComparison.Ordinal))
       {
-        var segment = line["data:".Length..];
-        if (segment.StartsWith(" ", StringComparison.Ordinal))
+        eventName = line["event:".Length..].Trim ();
+
+        continue;
+      }
+
+      if (line.StartsWith (value: "data:", comparisonType: StringComparison.Ordinal))
+      {
+        string segment = line["data:".Length..];
+
+        if (segment.StartsWith (value: " ", comparisonType: StringComparison.Ordinal))
+        {
           segment = segment[1..];
+        }
 
         if (hasDataLine)
-          _ = data.Append('\n');
+        {
+          _ = data.Append ('\n');
+        }
 
-        _ = data.Append(segment);
+        _           = data.Append (segment);
         hasDataLine = true;
       }
     }
 
     // Handle a final frame if the stream ends without a trailing blank line.
-    await foreach (var n in FlushFrameAsync(cancellationToken))
+    await foreach (ServerNotification n in FlushFrameAsync (cancellationToken))
+    {
       yield return n;
+    }
   }
 
   private static bool TryParseFailurePayload (string payload, out StreamFailureEventData failureData)
   {
-    failureData = new StreamFailureEventData("", null, false);
+    failureData = new StreamFailureEventData (Message: "", Code: null, IsRetryable: false);
 
-    if (string.IsNullOrWhiteSpace(payload))
+    if (string.IsNullOrWhiteSpace (payload))
     {
       return false;
     }
 
     try
     {
-      var parsed = JsonSerializer.Deserialize<StreamFailureEventData>(payload);
+      StreamFailureEventData? parsed = JsonSerializer.Deserialize<StreamFailureEventData> (payload);
+
       if (parsed is null)
       {
         return false;
       }
 
       failureData = parsed;
+
       return true;
     }
     catch (JsonException)

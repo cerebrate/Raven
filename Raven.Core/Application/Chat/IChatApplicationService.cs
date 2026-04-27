@@ -1,4 +1,22 @@
+#region header
+
+// Raven.Core - IChatApplicationService.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-27 12:05 PM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Core.Application.Sessions;
+using JetBrains.Annotations;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Core.Application.Chat;
 
@@ -10,20 +28,18 @@ public interface IChatApplicationService
   Task<string> CreateSessionAsync (CancellationToken cancellationToken = default);
 
   // Sends a message for a session and returns the full reply, or null when the session is unknown.
-  Task<string?> SendMessageAsync (
-      string sessionId,
-      string content,
-      ChatRequestContext? requestContext = null,
-      CancellationToken cancellationToken = default);
+  Task<string?> SendMessageAsync (string              sessionId,
+                                  string              content,
+                                  ChatRequestContext? requestContext    = null,
+                                  CancellationToken   cancellationToken = default);
 
   // Streams message chunks for a session by invoking onChunkAsync for each chunk.
   // Returns false when the session is unknown; otherwise true.
-  Task<bool> StreamMessageAsync (
-      string sessionId,
-      string content,
-      Func<string, CancellationToken, Task> onChunkAsync,
-      ChatRequestContext? requestContext = null,
-      CancellationToken cancellationToken = default);
+  Task<bool> StreamMessageAsync (string                                sessionId,
+                                 string                                content,
+                                 Func<string, CancellationToken, Task> onChunkAsync,
+                                 ChatRequestContext?                   requestContext    = null,
+                                 CancellationToken                     cancellationToken = default);
 
   // Returns session metadata, or null when the session is unknown.
   Task<SessionInfo?> GetSessionAsync (string sessionId, CancellationToken cancellationToken = default);

@@ -1,7 +1,25 @@
+#region header
+
+// Raven.Client.Console - ConsoleLoop.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-27 4:02 PM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Client.Console.Models;
 using ArkaneSystems.Raven.Client.Console.Rendering;
 using ArkaneSystems.Raven.Client.Console.Services;
 using ArkaneSystems.Raven.Contracts.Chat;
+using JetBrains.Annotations;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Client.Console;
 
@@ -18,17 +36,20 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
   // selectMode is set when the user passes --select on the command line.
   // When true and no resumeSessionId is provided, the REPL shows a numbered
   // session-selection menu and lets the user pick before entering the loop.
-  public async Task RunAsync (string? resumeSessionId = null, bool selectMode = false, CancellationToken cancellationToken = default)
+  public async Task RunAsync (string?           resumeSessionId   = null,
+                              bool              selectMode        = false,
+                              CancellationToken cancellationToken = default)
   {
     renderer.ShowBanner ();
 
-    bool isResumed = false;
+    bool    isResumed    = false;
     string? sessionTitle = null;
 
     if (!string.IsNullOrWhiteSpace (resumeSessionId))
     {
       // Validate the session exists before attaching to it.
-      var info = await client.GetSessionAsync (resumeSessionId);
+      SessionInfoResponse? info = await client.GetSessionAsync (resumeSessionId);
+
       if (info is null)
       {
         renderer.ShowError ($"Session '{resumeSessionId}' not found. Starting a new session instead.");
@@ -37,25 +58,26 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       else
       {
         state.SessionId = resumeSessionId;
-        sessionTitle = info.Title;
-        isResumed = true;
+        sessionTitle    = info.Title;
+        isResumed       = true;
       }
     }
     else if (selectMode)
     {
       // --select: fetch existing sessions and let the user pick one or start new.
-      var sessions = await client.ListSessionsAsync ();
+      IReadOnlyList<SessionSummary> sessions = await client.ListSessionsAsync ();
       renderer.ShowSessionSelectionMenu (sessions);
 
       if (sessions.Count > 0)
       {
-        var raw = await ReadLineWithCancellationAsync (cancellationToken);
-        var chosenSession = ResolveSelectionChoice (raw, sessions);
+        string?         raw           = await ReadLineWithCancellationAsync (cancellationToken);
+        SessionSummary? chosenSession = ResolveSelectionChoice (raw: raw, sessions: sessions);
+
         if (chosenSession is not null)
         {
           state.SessionId = chosenSession.SessionId;
-          sessionTitle = chosenSession.Title;
-          isResumed = true;
+          sessionTitle    = chosenSession.Title;
+          isResumed       = true;
         }
         else
         {
@@ -80,13 +102,13 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     // Show the session title (if known) centered between the Figlet and the
     // "AI Assistant" separator Rule, then the session-started line.
     renderer.ShowSessionHeader (sessionTitle);
-    renderer.ShowSessionStarted (state.SessionId, isResumed, sessionTitle);
+    renderer.ShowSessionStarted (sessionId: state.SessionId, isResumed: isResumed, title: sessionTitle);
 
     // loopCts is cancelled either by the outer token (process shutdown) or by
     // the notification listener when the server announces a shutdown/restart.
     // Using a linked source means the REPL exits cleanly on either signal
     // without needing to poll or check flags in every branch.
-    using var loopCts = CancellationTokenSource.CreateLinkedTokenSource (cancellationToken);
+    using CancellationTokenSource loopCts = CancellationTokenSource.CreateLinkedTokenSource (cancellationToken);
 
     // Track a server-initiated shutdown/restart so we can display the right
     // message after the loop exits. Null means no server notification arrived.
@@ -100,40 +122,45 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     // Background task: subscribes to the server notification channel and
     // cancels loopCts when a shutdown/restart notification arrives. This
     // ensures idle clients (not currently streaming) are notified promptly.
-    var notificationTask = MonitorNotificationsAsync (
-        state.SessionId,
-        isRestart =>
-        {
-          serverShutdownIsRestart = isRestart;
-          loopCts.Cancel ();
-        },
-        loopCts.Token);
+    Task notificationTask = this.MonitorNotificationsAsync (sessionId: state.SessionId,
+                                                            onServerShutdown: isRestart =>
+                                                                              {
+                                                                                serverShutdownIsRestart = isRestart;
+                                                                                loopCts.Cancel ();
+                                                                              },
+                                                            cancellationToken: loopCts.Token);
 
     try
     {
       while (!loopCts.Token.IsCancellationRequested)
       {
         renderer.WriteUserPrompt ();
-        var input = await ReadLineWithCancellationAsync (loopCts.Token);
+        string? input = await ReadLineWithCancellationAsync (loopCts.Token);
 
         // null means the input stream was closed (e.g. Ctrl+Z / EOF).
-        if (input is null || input.Equals ("/exit", StringComparison.OrdinalIgnoreCase))
+        if (input is null || input.Equals (value: "/exit", comparisonType: StringComparison.OrdinalIgnoreCase))
+        {
           break;
+        }
 
         if (string.IsNullOrWhiteSpace (input))
+        {
           continue;
+        }
 
-        if (input.Equals ("/help", StringComparison.OrdinalIgnoreCase))
+        if (input.Equals (value: "/help", comparisonType: StringComparison.OrdinalIgnoreCase))
         {
           renderer.ShowHelp ();
+
           continue;
         }
 
         // /new: delete the current session server-side (best-effort — ignore
         // errors in case it was already removed) then start a fresh one.
-        if (input.Equals ("/new", StringComparison.OrdinalIgnoreCase))
+        if (input.Equals (value: "/new", comparisonType: StringComparison.OrdinalIgnoreCase))
         {
-          var oldSessionId = state.SessionId;
+          string oldSessionId = state.SessionId;
+
           try
           {
             await client.DeleteSessionAsync (oldSessionId);
@@ -144,18 +171,19 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           }
 
           state.SessionId = await client.CreateSessionAsync ();
-          sessionTitle = null;   // new session starts without a title
-          isResumed    = false;  // session was created, not resumed
-          renderer.ShowNewSession (oldSessionId, state.SessionId);
+          sessionTitle    = null;  // new session starts without a title
+          isResumed       = false; // session was created, not resumed
+          renderer.ShowNewSession (oldSessionId: oldSessionId, newSessionId: state.SessionId);
+
           continue;
         }
 
         // /sessions: list all resumable sessions on the server.
-        if (input.Equals ("/sessions", StringComparison.OrdinalIgnoreCase))
+        if (input.Equals (value: "/sessions", comparisonType: StringComparison.OrdinalIgnoreCase))
         {
           try
           {
-            var sessions = await client.ListSessionsAsync ();
+            IReadOnlyList<SessionSummary> sessions = await client.ListSessionsAsync ();
             renderer.ShowSessionList (sessions);
           }
           catch (Exception ex)
@@ -169,18 +197,21 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         // /resume <sessionId>: switch the current REPL to an existing session.
         // The notification monitor continues on the current channel since
         // shutdown events are broadcast to all active sessions regardless.
-        if (input.StartsWith ("/resume ", StringComparison.OrdinalIgnoreCase))
+        if (input.StartsWith (value: "/resume ", comparisonType: StringComparison.OrdinalIgnoreCase))
         {
-          var targetId = input["/resume ".Length..].Trim ();
+          string targetId = input["/resume ".Length..].Trim ();
+
           if (string.IsNullOrWhiteSpace (targetId))
           {
             renderer.ShowWarning ("Usage: /resume <session-id>");
+
             continue;
           }
 
           try
           {
-            var info = await client.GetSessionAsync (targetId);
+            SessionInfoResponse? info = await client.GetSessionAsync (targetId);
+
             if (info is null)
             {
               renderer.ShowError ($"Session '{targetId}' not found.");
@@ -188,8 +219,8 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
             else
             {
               state.SessionId = targetId;
-              sessionTitle = info.Title;
-              renderer.ShowSessionStarted (state.SessionId, isResumed: true, info.Title);
+              sessionTitle    = info.Title;
+              renderer.ShowSessionStarted (sessionId: state.SessionId, isResumed: true, title: info.Title);
             }
           }
           catch (Exception ex)
@@ -201,15 +232,20 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         }
 
         // /history: fetch and display metadata for the current session.
-        if (input.Equals ("/history", StringComparison.OrdinalIgnoreCase))
+        if (input.Equals (value: "/history", comparisonType: StringComparison.OrdinalIgnoreCase))
         {
           try
           {
-            var info = await client.GetSessionAsync(state.SessionId);
+            SessionInfoResponse? info = await client.GetSessionAsync (state.SessionId);
+
             if (info is not null)
+            {
               renderer.ShowSessionInfo (info);
+            }
             else
+            {
               renderer.ShowError ("Session not found.");
+            }
           }
           catch (Exception ex)
           {
@@ -224,35 +260,43 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         // operations from ordinary session commands (/new, /history) and makes it
         // obvious in the /help table that they affect all connected clients.
         // Both require explicit confirmation ("yes") before the request is sent.
-        if (input.Equals ("/admin:shutdown", StringComparison.OrdinalIgnoreCase) ||
-            input.Equals ("/admin:restart", StringComparison.OrdinalIgnoreCase))
+        if (input.Equals (value: "/admin:shutdown", comparisonType: StringComparison.OrdinalIgnoreCase) ||
+            input.Equals (value: "/admin:restart",  comparisonType: StringComparison.OrdinalIgnoreCase))
         {
-          var isRestart = input.Equals ("/admin:restart", StringComparison.OrdinalIgnoreCase);
+          bool isRestart = input.Equals (value: "/admin:restart", comparisonType: StringComparison.OrdinalIgnoreCase);
 
           renderer.ShowAdminCommandConfirmationPrompt (isRestart);
-          var confirmation = await ReadLineWithCancellationAsync (loopCts.Token);
+          string? confirmation = await ReadLineWithCancellationAsync (loopCts.Token);
 
           if (loopCts.Token.IsCancellationRequested)
+          {
             break;
+          }
 
-          if (!string.Equals (confirmation, "yes", StringComparison.OrdinalIgnoreCase))
+          if (!string.Equals (a: confirmation, b: "yes", comparisonType: StringComparison.OrdinalIgnoreCase))
           {
             renderer.ShowWarning ("Cancelled.");
+
             continue;
           }
 
           try
           {
             if (isRestart)
+            {
               await client.RequestRestartAsync ();
+            }
             else
+            {
               await client.RequestShutdownAsync ();
+            }
 
             renderer.ShowAdminCommandAccepted (isRestart);
           }
           catch (Exception ex)
           {
             renderer.ShowError (ex.Message);
+
             continue;
           }
 
@@ -265,9 +309,10 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
         // status/progress during streaming, then renders the full Markdown response once.
         try
         {
-          await renderer.RenderResponseStreamAsync (
-              client.StreamMessageAsync (state.SessionId, input, loopCts.Token),
-              loopCts.Token);
+          await renderer.RenderResponseStreamAsync (chunks: client.StreamMessageAsync (sessionId: state.SessionId,
+                                                                                       content: input,
+                                                                                       cancellationToken: loopCts.Token),
+                                                    cancellationToken: loopCts.Token);
 
           // After each successful exchange, check whether the server has generated
           // (or updated) the session title.  This typically fires after the first
@@ -277,7 +322,8 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           {
             try
             {
-              var refreshed = await client.GetSessionAsync (state.SessionId);
+              SessionInfoResponse? refreshed = await client.GetSessionAsync (state.SessionId);
+
               if (!string.IsNullOrWhiteSpace (refreshed?.Title))
               {
                 sessionTitle = refreshed.Title;
@@ -290,18 +336,23 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
             }
           }
         }
-        catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
+        catch (StreamEventFailedException ex) when (string.Equals (a: ex.Code,
+                                                                   b: "session_stale",
+                                                                   comparisonType: StringComparison.Ordinal))
         {
           renderer.ShowWarning ("The current session is stale and can no longer be used.");
           renderer.ShowStaleSessionRecoveryPrompt ();
 
           _ = await ReadLineWithCancellationAsync (loopCts.Token);
-          if (loopCts.Token.IsCancellationRequested)
-            break;
 
-          var oldSessionId = state.SessionId;
+          if (loopCts.Token.IsCancellationRequested)
+          {
+            break;
+          }
+
+          string oldSessionId = state.SessionId;
           state.SessionId = await client.CreateSessionAsync ();
-          renderer.ShowNewSession (oldSessionId, state.SessionId);
+          renderer.ShowNewSession (oldSessionId: oldSessionId, newSessionId: state.SessionId);
         }
         catch (ServerShuttingDownException ex)
         {
@@ -311,6 +362,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           // guarded so the message is shown exactly once.
           renderer.ShowAdminCommandAccepted (ex.IsRestart);
           serverShutdownHandled = true;
+
           break;
         }
         catch (Exception ex)
@@ -324,6 +376,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       // Cancel the notification task and wait for it to finish so it does not
       // linger after RunAsync returns.
       loopCts.Cancel ();
+
       try
       {
         await notificationTask;
@@ -337,29 +390,33 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     // If the loop was interrupted by a server notification (and not already
     // handled by ServerShuttingDownException above), show the appropriate message.
     if (serverShutdownIsRestart.HasValue && !serverShutdownHandled)
+    {
       renderer.ShowAdminCommandAccepted (serverShutdownIsRestart.Value);
+    }
 
-    renderer.ShowGoodbye (state.SessionId, sessionTitle);
+    renderer.ShowGoodbye (sessionId: state.SessionId, title: sessionTitle);
   }
 
   // Subscribes to the server notification channel and invokes onServerShutdown
   // when a server_shutdown event is received. Connection errors are treated as
   // graceful end-of-stream so the background task never crashes the REPL.
-  private async Task MonitorNotificationsAsync (
-      string sessionId,
-      Action<bool> onServerShutdown,
-      CancellationToken cancellationToken)
+  private async Task MonitorNotificationsAsync (string            sessionId,
+                                                Action<bool>      onServerShutdown,
+                                                CancellationToken cancellationToken)
   {
     try
     {
-      await foreach (var notification in client.SubscribeToNotificationsAsync (sessionId, cancellationToken))
+      await foreach (ServerNotification notification in client.SubscribeToNotificationsAsync (sessionId: sessionId,
+                                                                                              cancellationToken: cancellationToken))
       {
-        if (string.Equals (notification.EventType, "server_shutdown", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals (a: notification.EventType, b: "server_shutdown", comparisonType: StringComparison.OrdinalIgnoreCase))
         {
-          var isRestart = string.Equals (notification.Data, "restart", StringComparison.OrdinalIgnoreCase);
+          bool isRestart = string.Equals (a: notification.Data, b: "restart", comparisonType: StringComparison.OrdinalIgnoreCase);
           onServerShutdown (isRestart);
+
           return; // one shutdown per session is enough
         }
+
         // Unknown event types are silently ignored — forward compatibility.
       }
     }
@@ -382,10 +439,13 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
   private static async Task<string?> ReadLineWithCancellationAsync (CancellationToken cancellationToken)
   {
     if (cancellationToken.IsCancellationRequested)
+    {
       return null;
+    }
 
-    var readTask = Task.Run (System.Console.ReadLine, CancellationToken.None);
-    await Task.WhenAny (readTask, Task.Delay (Timeout.Infinite, cancellationToken));
+    Task<string?> readTask = Task.Run (function: System.Console.ReadLine, cancellationToken: CancellationToken.None);
+    await Task.WhenAny (task1: readTask,
+                        task2: Task.Delay (millisecondsDelay: Timeout.Infinite, cancellationToken: cancellationToken));
 
     return cancellationToken.IsCancellationRequested ? null : await readTask;
   }
@@ -396,13 +456,19 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
   private static SessionSummary? ResolveSelectionChoice (string? raw, IReadOnlyList<SessionSummary> sessions)
   {
     if (string.IsNullOrWhiteSpace (raw))
+    {
       return null;
+    }
 
-    if (!int.TryParse (raw.Trim (), out var choice))
+    if (!int.TryParse (s: raw.Trim (), result: out int choice))
+    {
       return null;
+    }
 
-    if (choice < 1 || choice > sessions.Count)
+    if ((choice < 1) || (choice > sessions.Count))
+    {
       return null;
+    }
 
     return sessions[choice - 1];
   }

@@ -467,6 +467,7 @@ Raven.Core/
 4. **Policy-gated tools**: Especially mutating, sensitive, or external operations require approval
 5. **Observability**: Correlation IDs, structured logs, traces, metrics from day one
 6. **Reliable operations**: Retries with jitter, idempotency where practical, dead-letter handling
+7. **Respect agreed UI plans**: Implement UIs to closely match the agreed design and interaction plan. Do not diverge without explicit stakeholder approval. If a deviation is necessary, document the reason and impact, obtain sign-off, and add visual/regression checks to validate delivered UI against the plan.
 
 ## Common Tasks
 

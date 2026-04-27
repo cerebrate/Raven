@@ -1,5 +1,24 @@
+#region header
+
+// Raven.Client.Console - SpectreConsoleRenderer.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-27 12:05 PM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Contracts.Chat;
+using JetBrains.Annotations;
 using Spectre.Console;
+using System.Text;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Client.Console.Rendering;
 
@@ -10,16 +29,15 @@ namespace ArkaneSystems.Raven.Client.Console.Rendering;
 public class SpectreConsoleRenderer : IConsoleRenderer
 {
   public void ShowBanner ()
-  {
-    // FigletText renders large ASCII-art text using a built-in font.
-    // The separator Rule and optional session title are rendered by
-    // ShowSessionHeader once the session is created/resolved, so the
-    // Figlet is the only thing that belongs here.
-    AnsiConsole.Write (
-        new FigletText ("Raven")
-            .Centered ()
-            .Color (Color.SteelBlue1));
-  }
+    =>
+
+      // FigletText renders large ASCII-art text using a built-in font.
+      // The separator Rule and optional session title are rendered by
+      // ShowSessionHeader once the session is created/resolved, so the
+      // Figlet is the only thing that belongs here.
+      AnsiConsole.Write (new FigletText ("Raven")
+                        .Centered ()
+                        .Color (Color.SteelBlue1));
 
   // Renders the session-title area between the Figlet banner and the chat prompt:
   //   [centered title in steelblue1]   ← only when a title is known
@@ -31,25 +49,22 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     {
       // Align centres the Markup renderable inside the terminal width so the
       // title appears directly below the Figlet without surrounding dashes.
-      AnsiConsole.Write (
-          new Align (
-              new Markup ($"[steelblue1_1]{Markup.Escape (title)}[/]"),
-              HorizontalAlignment.Center));
+      AnsiConsole.Write (new Align (renderable: new Markup ($"[steelblue1_1]{Markup.Escape (title)}[/]"),
+                                    horizontal: HorizontalAlignment.Center));
       AnsiConsole.WriteLine ();
     }
 
     // Rule draws a horizontal line with optional centred label.
-    AnsiConsole.Write (
-        new Rule ("[grey]AI Assistant[/]")
-            .RuleStyle ("grey")
-            .Centered ());
+    AnsiConsole.Write (new Rule ("[grey]AI Assistant[/]")
+                      .RuleStyle ("grey")
+                      .Centered ());
 
     AnsiConsole.WriteLine ();
   }
 
   public void ShowSessionStarted (string sessionId, bool isResumed = false)
   {
-    var verb = isResumed ? "Resumed session" : "Session";
+    string verb = isResumed ? "Resumed session" : "Session";
     AnsiConsole.MarkupLine ($"[grey]{verb}:[/] [dim]{sessionId}[/]");
     AnsiConsole.MarkupLine ("[grey]Type [/][steelblue1]/exit[/][grey] to quit, [/][steelblue1]/help[/][grey] for commands, [/][yellow]/admin:shutdown[/][grey] or [/][yellow]/admin:restart[/][grey] to manage the server.[/]");
     AnsiConsole.WriteLine ();
@@ -59,42 +74,50 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   // knows which conversation they rejoined without looking at the session ID.
   public void ShowSessionStarted (string sessionId, bool isResumed, string? title)
   {
-    var verb = isResumed ? "Resumed session" : "Session";
+    string verb = isResumed ? "Resumed session" : "Session";
+
     if (isResumed && !string.IsNullOrWhiteSpace (title))
+    {
       AnsiConsole.MarkupLine ($"[grey]{verb}:[/] [steelblue1]{Markup.Escape (title)}[/] [dim]({sessionId})[/]");
+    }
     else
+    {
       AnsiConsole.MarkupLine ($"[grey]{verb}:[/] [dim]{sessionId}[/]");
+    }
+
     AnsiConsole.MarkupLine ("[grey]Type [/][steelblue1]/exit[/][grey] to quit, [/][steelblue1]/help[/][grey] for commands, [/][yellow]/admin:shutdown[/][grey] or [/][yellow]/admin:restart[/][grey] to manage the server.[/]");
     AnsiConsole.WriteLine ();
   }
 
   public void ShowHelp ()
   {
-    var table = new Table()
-            .BorderStyle(Style.Parse("grey"))
-            .AddColumn(new TableColumn("[steelblue1]Command[/]").NoWrap())
-            .AddColumn(new TableColumn("[grey]Description[/]"));
+    Table table = new Table ()
+                 .BorderStyle (Style.Parse ("grey"))
+                 .AddColumn (new TableColumn ("[steelblue1]Command[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[grey]Description[/]"));
 
     // Session commands
-    table.AddRow ("[steelblue1]/new[/]", "Start a new session");
-    table.AddRow ("[steelblue1]/sessions[/]", "List resumable sessions");
+    table.AddRow ("[steelblue1]/new[/]",         "Start a new session");
+    table.AddRow ("[steelblue1]/sessions[/]",    "List resumable sessions");
     table.AddRow ("[steelblue1]/resume <id>[/]", "Resume a session by ID");
-    table.AddRow ("[steelblue1]/history[/]", "Show current session info");
-    table.AddRow ("[steelblue1]/help[/]", "Show this help");
-    table.AddRow ("[steelblue1]/exit[/]", "End the session and quit");
+    table.AddRow ("[steelblue1]/history[/]",     "Show current session info");
+    table.AddRow ("[steelblue1]/help[/]",        "Show this help");
+    table.AddRow ("[steelblue1]/exit[/]",        "End the session and quit");
 
     // Admin commands — styled yellow to emphasise that they affect the server
     // and all connected clients, not just the current session.
     table.AddRow ("[yellow]/admin:shutdown[/]", "[grey]Shut down the Raven.Core server (requires confirmation)[/]");
-    table.AddRow ("[yellow]/admin:restart[/]", "[grey]Restart the Raven.Core server (requires confirmation)[/]");
+    table.AddRow ("[yellow]/admin:restart[/]",  "[grey]Restart the Raven.Core server (requires confirmation)[/]");
 
     AnsiConsole.Write (table);
     AnsiConsole.WriteLine ();
   }
 
-  public void WriteUserPrompt () =>
-    // Markup (not MarkupLine) so the cursor stays on the same line as the prompt.
-    AnsiConsole.Markup ("[steelblue1]>[/] ");
+  public void WriteUserPrompt ()
+    =>
+
+      // Markup (not MarkupLine) so the cursor stays on the same line as the prompt.
+      AnsiConsole.Markup ("[steelblue1]>[/] ");
 
   // Render the streaming agent response using a two-phase approach:
   //
@@ -111,36 +134,38 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   // unreliable because accurate line counting requires knowing the true
   // terminal display width (affected by Unicode character widths, ConPTY
   // quirks, and window resize during streaming).
-  public async Task RenderResponseStreamAsync (
-      IAsyncEnumerable<string> chunks,
-      CancellationToken cancellationToken = default)
+  public async Task RenderResponseStreamAsync (IAsyncEnumerable<string> chunks,
+                                               CancellationToken        cancellationToken = default)
   {
     AnsiConsole.MarkupLine ("[steelblue1_1]Raven:[/]");
 
-    var accumulated = new System.Text.StringBuilder ();
+    StringBuilder accumulated = new StringBuilder ();
 
     // Phase 1: accumulate chunks behind a spinner.
     await AnsiConsole.Status ()
-        .Spinner (Spinner.Known.Dots)
-        .SpinnerStyle (Style.Parse ("steelblue1_1 dim"))
-        .StartAsync ("[dim]thinking…[/]", async ctx =>
-        {
-          await foreach (var chunk in chunks.WithCancellation (cancellationToken))
-          {
-            accumulated.Append (chunk);
+                     .Spinner (Spinner.Known.Dots)
+                     .SpinnerStyle (Style.Parse ("steelblue1_1 dim"))
+                     .StartAsync (status: "[dim]thinking…[/]",
+                                  action: async ctx =>
+                                          {
+                                            await foreach (string chunk in chunks.WithCancellation (cancellationToken))
+                                            {
+                                              accumulated.Append (chunk);
 
-            // Show the last ~60 chars of accumulated text as a live status
-            // message so the user can see progress without scroll corruption.
-            var preview = accumulated.ToString ();
-            var start   = Math.Max (0, preview.Length - 60);
-            var tail    = Markup.Escape (preview[start..].ReplaceLineEndings (" "));
-            ctx.Status ($"[dim]{tail}[/]");
-          }
-        });
+                                              // Show the last ~60 chars of accumulated text as a live status
+                                              // message so the user can see progress without scroll corruption.
+                                              string preview = accumulated.ToString ();
+                                              int    start   = Math.Max (val1: 0, val2: preview.Length - 60);
+                                              string tail    = Markup.Escape (preview[start..].ReplaceLineEndings (" "));
+                                              ctx.Status ($"[dim]{tail}[/]");
+                                            }
+                                          });
 
     // Phase 2: write the final formatted Markdown into the scroll buffer.
     if (accumulated.Length > 0)
+    {
       AnsiConsole.Write (MarkdownToSpectreRenderer.Render (accumulated.ToString ()));
+    }
 
     AnsiConsole.WriteLine ();
   }
@@ -169,42 +194,51 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   }
 
   public void ShowStaleSessionRecoveryPrompt ()
-  {
-    AnsiConsole.MarkupLine ("[grey]Press Enter to create a new session and continue.[/]");
-  }
+    => AnsiConsole.MarkupLine ("[grey]Press Enter to create a new session and continue.[/]");
 
-  public void ShowGoodbye (string? sessionId = null) =>
-    ShowGoodbye (sessionId, title: null);
+  public void ShowGoodbye (string? sessionId = null) => this.ShowGoodbye (sessionId: sessionId, title: null);
 
   // Overload that shows the title as well when the session has one.
   public void ShowGoodbye (string? sessionId, string? title)
   {
     AnsiConsole.WriteLine ();
+
     if (!string.IsNullOrWhiteSpace (sessionId))
     {
       if (!string.IsNullOrWhiteSpace (title))
+      {
         AnsiConsole.MarkupLine ($"[grey]Session [steelblue1]{Markup.Escape (title)}[/] [dim]({sessionId})[/] is saved.[/]");
+      }
       else
+      {
         AnsiConsole.MarkupLine ($"[grey]Session [dim]{Markup.Escape (sessionId)}[/] is saved.[/]");
+      }
+
       AnsiConsole.MarkupLine ($"[grey]Resume it next time with: [/][steelblue1]--resume {Markup.Escape (sessionId)}[/]");
     }
+
     AnsiConsole.MarkupLine ("[grey]Goodbye.[/]");
   }
 
   public void ShowSessionInfo (SessionInfoResponse info)
   {
-    var table = new Table()
-            .BorderStyle(Style.Parse("grey"))
-            .AddColumn(new TableColumn("[grey]Property[/]").NoWrap())
-            .AddColumn(new TableColumn("[grey]Value[/]"));
+    Table table = new Table ()
+                 .BorderStyle (Style.Parse ("grey"))
+                 .AddColumn (new TableColumn ("[grey]Property[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[grey]Value[/]"));
 
     table.AddRow ("Session ID", $"[dim]{Markup.Escape (info.SessionId)}[/]");
+
     if (!string.IsNullOrWhiteSpace (info.Title))
+    {
       table.AddRow ("Title", $"[steelblue1]{Markup.Escape (info.Title)}[/]");
+    }
+
     table.AddRow ("Started", $"[dim]{info.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm:ss}[/]");
-    table.AddRow ("Last activity", info.LastActivityAt.HasValue
-        ? $"[dim]{info.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm:ss}[/]"
-        : "[dim]—[/]");
+    table.AddRow ("Last activity",
+                  info.LastActivityAt.HasValue
+                    ? $"[dim]{info.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm:ss}[/]"
+                    : "[dim]—[/]");
 
     AnsiConsole.Write (table);
     AnsiConsole.WriteLine ();
@@ -223,28 +257,28 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     {
       AnsiConsole.MarkupLine ("[grey]No resumable sessions found.[/]");
       AnsiConsole.WriteLine ();
+
       return;
     }
 
-    var table = new Table()
-            .BorderStyle(Style.Parse("grey"))
-            .AddColumn(new TableColumn("[grey]#[/]").NoWrap())
-            .AddColumn(new TableColumn("[steelblue1]Session ID[/]").NoWrap())
-            .AddColumn(new TableColumn("[grey]Title[/]"))
-            .AddColumn(new TableColumn("[grey]Started[/]").NoWrap())
-            .AddColumn(new TableColumn("[grey]Last active[/]").NoWrap());
+    Table table = new Table ()
+                 .BorderStyle (Style.Parse ("grey"))
+                 .AddColumn (new TableColumn ("[grey]#[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[steelblue1]Session ID[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[grey]Title[/]"))
+                 .AddColumn (new TableColumn ("[grey]Started[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[grey]Last active[/]").NoWrap ());
 
     for (int i = 0; i < sessions.Count; i++)
     {
-      var s = sessions[i];
-      table.AddRow (
-          $"[grey]{i + 1}[/]",
-          $"[dim]{Markup.Escape (s.SessionId)}[/]",
-          !string.IsNullOrWhiteSpace (s.Title) ? Markup.Escape (s.Title) : "[dim]—[/]",
-          $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
-          s.LastActivityAt.HasValue
-              ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
-              : "[dim]—[/]");
+      SessionSummary s = sessions[i];
+      table.AddRow ($"[grey]{i + 1}[/]",
+                    $"[dim]{Markup.Escape (s.SessionId)}[/]",
+                    !string.IsNullOrWhiteSpace (s.Title) ? Markup.Escape (s.Title) : "[dim]—[/]",
+                    $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
+                    s.LastActivityAt.HasValue
+                      ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
+                      : "[dim]—[/]");
     }
 
     AnsiConsole.Write (table);
@@ -259,31 +293,31 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     {
       AnsiConsole.MarkupLine ("[grey]No resumable sessions found. Starting a new session.[/]");
       AnsiConsole.WriteLine ();
+
       return;
     }
 
-    var table = new Table()
-            .BorderStyle(Style.Parse("grey"))
-            .AddColumn(new TableColumn("[grey]#[/]").NoWrap())
-            .AddColumn(new TableColumn("[steelblue1]Session ID[/]").NoWrap())
-            .AddColumn(new TableColumn("[grey]Title[/]"))
-            .AddColumn(new TableColumn("[grey]Started[/]").NoWrap())
-            .AddColumn(new TableColumn("[grey]Last active[/]").NoWrap());
+    Table table = new Table ()
+                 .BorderStyle (Style.Parse ("grey"))
+                 .AddColumn (new TableColumn ("[grey]#[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[steelblue1]Session ID[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[grey]Title[/]"))
+                 .AddColumn (new TableColumn ("[grey]Started[/]").NoWrap ())
+                 .AddColumn (new TableColumn ("[grey]Last active[/]").NoWrap ());
 
     // Entry 0 = new session; existing sessions start at 1.
     table.AddRow ("[grey]0[/]", "[steelblue1]< new session >[/]", "", "", "");
 
     for (int i = 0; i < sessions.Count; i++)
     {
-      var s = sessions[i];
-      table.AddRow (
-          $"[grey]{i + 1}[/]",
-          $"[dim]{Markup.Escape (s.SessionId)}[/]",
-          !string.IsNullOrWhiteSpace (s.Title) ? Markup.Escape (s.Title) : "[dim]—[/]",
-          $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
-          s.LastActivityAt.HasValue
-              ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
-              : "[dim]—[/]");
+      SessionSummary s = sessions[i];
+      table.AddRow ($"[grey]{i + 1}[/]",
+                    $"[dim]{Markup.Escape (s.SessionId)}[/]",
+                    !string.IsNullOrWhiteSpace (s.Title) ? Markup.Escape (s.Title) : "[dim]—[/]",
+                    $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
+                    s.LastActivityAt.HasValue
+                      ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
+                      : "[dim]—[/]");
     }
 
     AnsiConsole.Write (table);
@@ -293,7 +327,7 @@ public class SpectreConsoleRenderer : IConsoleRenderer
 
   public void ShowAdminCommandConfirmationPrompt (bool isRestart)
   {
-    var action = isRestart ? "restart" : "shut down";
+    string action = isRestart ? "restart" : "shut down";
     AnsiConsole.MarkupLine ($"[yellow]This will {action} the Raven.Core server and disconnect all connected clients.[/]");
     AnsiConsole.Markup ("[grey]Type [/][steelblue1]yes[/][grey] to confirm, or press Enter to cancel: [/]");
   }
@@ -301,7 +335,7 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   public void ShowAdminCommandAccepted (bool isRestart)
   {
     AnsiConsole.WriteLine ();
-    var action = isRestart ? "restarting" : "shutting down";
+    string action = isRestart ? "restarting" : "shutting down";
     AnsiConsole.MarkupLine ($"[yellow]Server is {action}. Goodbye.[/]");
     AnsiConsole.WriteLine ();
   }
