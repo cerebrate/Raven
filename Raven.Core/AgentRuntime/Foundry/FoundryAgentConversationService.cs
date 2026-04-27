@@ -111,8 +111,13 @@ public class FoundryAgentConversationService : IAgentConversationService
     // correctly when the caller cancels iteration.
     //
     // streamCompleted is set only after the foreach exits normally; the finally
-    // block then persists the updated session.  We skip persistence on
-    // cancellation because the SDK may have left the session in a partial state.
+    // block then persists the updated session.  Persistence is intentionally
+    // skipped when the stream fails mid-way: the SDK may have left the
+    // AgentSession in a partially-updated state (e.g. a message appended but
+    // no assistant response committed), so persisting it would corrupt the
+    // conversation history.  The in-memory session remains in the partially-
+    // updated state, but the on-disk copy retains the last fully-committed
+    // state — which is the safe baseline for any future restart.
     var streamCompleted = false;
     try
     {

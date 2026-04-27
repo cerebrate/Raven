@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.Application.Sessions;
 using Microsoft.Extensions.Logging;
+using System.Text;
 
 namespace ArkaneSystems.Raven.Core.Application.Chat;
 
@@ -9,6 +10,7 @@ public sealed class ChatApplicationService (
     ISessionStore sessions,
     ISessionEventLog sessionEventLog,
     ISessionSnapshotStore snapshotStore,
+    IConversationTitleService titleService,
     ILogger<ChatApplicationService> logger) : IChatApplicationService
 {
   // Creates both sides of the session mapping so clients only work with Raven session IDs.
@@ -94,9 +96,20 @@ public sealed class ChatApplicationService (
 
       // Update snapshot so the latest activity is reflected and the session
       // can be quickly resumed without replaying the full event log.
-      // Preserve any title already set on the snapshot; derive one from the first
-      // user message if the session doesn't have one yet.
-      var title = existingSnapshot?.Title ?? DeriveTitle (content);
+      // On the first exchange (no title yet) ask the model to generate one
+      // from the message and reply.  On subsequent exchanges the existing
+      // title is preserved; periodic re-generation will be hooked into
+      // context-window consolidation (Epic 3).
+      var title = existingSnapshot?.Title;
+      if (title is null)
+      {
+        title = await titleService.GenerateTitleAsync (content, reply, cancellationToken);
+      }
+      // existingSnapshot is always present for a valid, non-stale session: CreateSessionAsync
+      // writes an initial snapshot before returning the session ID.  The fallback to
+      // sessions.GetSessionAsync (and ultimately UtcNow) is a defensive safety net for
+      // any edge case where the initial snapshot was not written (e.g. a crash between
+      // CreateConversationAsync and snapshotStore.SaveSnapshotAsync).
       var createdAt = existingSnapshot?.CreatedAt ?? (await sessions.GetSessionAsync (sessionId))?.CreatedAt ?? DateTimeOffset.UtcNow;
       await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
           SessionId:        sessionId,
@@ -177,13 +190,21 @@ public sealed class ChatApplicationService (
 
     try
     {
+      // Accumulate the full reply while streaming so it is available for
+      // title generation after the stream completes.
+      var replyBuilder = new StringBuilder ();
       await foreach (var chunk in conversations.StreamMessageAsync(conversationId, content, cancellationToken))
       {
+        replyBuilder.Append (chunk);
         await onChunkAsync(chunk, cancellationToken);
       }
 
       // Update snapshot after successful stream completion so the session
       // is resumable from the latest state.
+      // On the first exchange (no title yet) ask the model to generate one
+      // from the message and accumulated reply.  On subsequent exchanges the
+      // existing title is preserved; periodic re-generation will be hooked
+      // into context-window consolidation (Epic 3).
       var envelope = await sessionEventLog.AppendAsync(
           sessionId,
           eventType: "chat.message.streamed.v1",
@@ -195,7 +216,12 @@ public sealed class ChatApplicationService (
           userId: context.UserId,
           cancellationToken: cancellationToken);
 
-      var title = existingSnapshot?.Title ?? DeriveTitle (content);
+      var title = existingSnapshot?.Title;
+      if (title is null)
+      {
+        title = await titleService.GenerateTitleAsync (content, replyBuilder.ToString (), cancellationToken);
+      }
+      // See SendMessageAsync for the rationale behind the existingSnapshot fallback chain.
       var createdAt = existingSnapshot?.CreatedAt ?? (await sessions.GetSessionAsync (sessionId))?.CreatedAt ?? DateTimeOffset.UtcNow;
       await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
           SessionId:        sessionId,
@@ -297,37 +323,5 @@ public sealed class ChatApplicationService (
     // Most-recently-snapshotted sessions first.
     snapshots.Sort (static (a, b) => b.SnapshotAt.CompareTo (a.SnapshotAt));
     return snapshots;
-  }
-
-  // Derives a human-readable title from the first user message so that the
-  // session list can show something meaningful without an extra AI call.
-  //
-  // Strategy: take the first line of the message (up to TitleMaxLength
-  // characters), strip excess whitespace, and append "…" if truncated.
-  // This is deterministic, fast, and requires no round-trip to the agent.
-  private const int TitleMaxLength = 60;
-
-  internal static string DeriveTitle (string firstUserMessage)
-  {
-    if (string.IsNullOrWhiteSpace (firstUserMessage))
-      return "New conversation";
-
-    // Use the first non-blank line as the basis for the title.
-    var firstLine = firstUserMessage
-        .Split (['\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
-        .FirstOrDefault (static l => !string.IsNullOrWhiteSpace (l))
-        ?.Trim ()
-        ?? firstUserMessage.Trim ();
-
-    if (firstLine.Length <= TitleMaxLength)
-      return firstLine;
-
-    // Truncate at a word boundary when possible so the title doesn't cut mid-word.
-    var truncated = firstLine[..TitleMaxLength];
-    var lastSpace = truncated.LastIndexOf (' ');
-    if (lastSpace > TitleMaxLength / 2)
-      truncated = truncated[..lastSpace];
-
-    return truncated + "…";
   }
 }

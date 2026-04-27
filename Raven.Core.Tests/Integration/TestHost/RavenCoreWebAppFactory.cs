@@ -1,5 +1,6 @@
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.Application.Admin;
+using ArkaneSystems.Raven.Core.Application.Chat;
 using ArkaneSystems.Raven.Core.Application.Sessions;
 using ArkaneSystems.Raven.Core.Tests.Integration.TestHost.Fakes;
 using Microsoft.AspNetCore.Hosting;
@@ -38,11 +39,14 @@ public sealed class RavenCoreWebAppFactory : WebApplicationFactory<Program>
     builder.ConfigureServices (services =>
     {
       services.RemoveAll<IAgentConversationService> ();
+      services.RemoveAll<IAgentService> ();
+      services.RemoveAll<IConversationTitleService> ();
       services.RemoveAll<ISessionStore> ();
       services.RemoveAll<ISessionSnapshotStore> ();
       services.RemoveAll<IShutdownCoordinator> ();
 
       services.AddSingleton<IAgentConversationService, FakeAgentConversationService> ();
+      services.AddSingleton<IConversationTitleService, FakeConversationTitleService> ();
       services.AddSingleton<ISessionStore, InMemorySessionStore> ();
       services.AddSingleton<ISessionSnapshotStore, InMemorySessionSnapshotStore> ();
       services.AddSingleton<FakeShutdownCoordinator> ();

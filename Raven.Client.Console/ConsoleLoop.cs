@@ -141,7 +141,8 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           }
 
           state.SessionId = await client.CreateSessionAsync ();
-          sessionTitle = null; // new session starts without a title
+          sessionTitle = null;   // new session starts without a title
+          isResumed    = false;  // session was created, not resumed
           renderer.ShowNewSession (oldSessionId, state.SessionId);
           continue;
         }

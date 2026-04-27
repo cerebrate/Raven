@@ -16,7 +16,7 @@ public sealed class ChatApplicationServiceTests
     var sessions = new InMemorySessionStore();
     var eventLog = new InMemorySessionEventLog();
     var snapshotStore = new InMemorySessionSnapshotStore();
-    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullLogger<ChatApplicationService>.Instance);
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullConversationTitleService.Instance, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
@@ -38,7 +38,7 @@ public sealed class ChatApplicationServiceTests
     var sessions = new InMemorySessionStore();
     var eventLog = new InMemorySessionEventLog();
     var snapshotStore = new InMemorySessionSnapshotStore();
-    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullLogger<ChatApplicationService>.Instance);
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullConversationTitleService.Instance, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
@@ -51,6 +51,16 @@ public sealed class ChatApplicationServiceTests
 
     Assert.Equal (sessionId, error.SessionId);
     Assert.False (await sessions.SessionExistsAsync (sessionId));
+  }
+
+  // Stub IConversationTitleService that always returns null (no title generated).
+  // Used in unit tests that do not exercise title-generation behaviour.
+  private sealed class NullConversationTitleService : IConversationTitleService
+  {
+    public static readonly NullConversationTitleService Instance = new ();
+
+    public Task<string?> GenerateTitleAsync (string userMessage, string agentReply, CancellationToken cancellationToken = default) =>
+        Task.FromResult<string?> (null);
   }
 
   private sealed class StubAgentConversationService : IAgentConversationService
@@ -77,50 +87,5 @@ public sealed class ChatApplicationServiceTests
       yield return !this._conversations.ContainsKey (conversationId) ? throw new ConversationNotFoundException (conversationId) : $"echo:{content}";
       await Task.CompletedTask;
     }
-  }
-}
-
-public sealed class DeriveTitleTests
-{
-  [Fact]
-  public void DeriveTitle_ReturnsFirstLine_WhenShortSingleLine ()
-  {
-    var title = ChatApplicationService.DeriveTitle ("What is the capital of France?");
-    Assert.Equal ("What is the capital of France?", title);
-  }
-
-  [Fact]
-  public void DeriveTitle_TruncatesAtWordBoundary_WhenInputExceeds60Chars ()
-  {
-    var longMessage = "This is a very long message that definitely exceeds sixty characters when measured carefully";
-    var title = ChatApplicationService.DeriveTitle (longMessage);
-
-    Assert.True (title.Length <= 63, $"Title too long: '{title}' ({title.Length} chars)"); // 60 + "…"
-    Assert.EndsWith ("…", title);
-  }
-
-  [Fact]
-  public void DeriveTitle_UsesFirstNonBlankLine_WhenMultilineInput ()
-  {
-    var multiLine = "\n\nHello, Raven!\nThis is the rest of the message.";
-    var title = ChatApplicationService.DeriveTitle (multiLine);
-    Assert.Equal ("Hello, Raven!", title);
-  }
-
-  [Fact]
-  public void DeriveTitle_ReturnsDefaultTitle_WhenInputIsEmpty ()
-  {
-    Assert.Equal ("New conversation", ChatApplicationService.DeriveTitle (""));
-    Assert.Equal ("New conversation", ChatApplicationService.DeriveTitle ("   "));
-    Assert.Equal ("New conversation", ChatApplicationService.DeriveTitle ("\n\n"));
-  }
-
-  [Theory]
-  [InlineData ("Hello")]
-  [InlineData ("What is AI?")]
-  public void DeriveTitle_NeverReturnsEmptyString (string input)
-  {
-    var title = ChatApplicationService.DeriveTitle (input);
-    Assert.False (string.IsNullOrWhiteSpace (title));
   }
 }
