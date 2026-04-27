@@ -1,29 +1,60 @@
+#region header
+
+// Raven.Core.Tests - ChatEndpointsTests.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-26 9:45 AM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Contracts.Chat;
 using ArkaneSystems.Raven.Core.AgentRuntime;
 using ArkaneSystems.Raven.Core.Bus.Contracts;
 using ArkaneSystems.Raven.Core.Bus.Dispatch;
 using ArkaneSystems.Raven.Core.Tests.Integration.TestHost;
 using ArkaneSystems.Raven.Core.Tests.Integration.TestHost.Fakes;
+using JetBrains.Annotations;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Json;
 
+#endregion
+
 namespace ArkaneSystems.Raven.Core.Tests.Integration;
 
-[Collection(IntegrationTestCollection.Name)]
+[Collection (IntegrationTestCollection.Name)]
 public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
 {
+  #region Nested type: StreamExecutionOutcome
+
+  private enum StreamExecutionOutcome
+  {
+    Completed,
+    Canceled
+  }
+
+  #endregion
+
+  private readonly HttpClient             _client  = factory.CreateClient ();
   private readonly RavenCoreWebAppFactory _factory = factory;
-  private readonly HttpClient _client = factory.CreateClient();
 
   [Fact]
   public async Task CreateSession_ReturnsSessionId ()
   {
-    var response = await this._client.PostAsJsonAsync("/api/chat/sessions", new { }, TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.PostAsJsonAsync (requestUri: "/api/chat/sessions",
+                                                                       value: new { },
+                                                                       cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.OK, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
 
-    var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(TestContext.Current.CancellationToken);
+    CreateSessionResponse? payload =
+      await response.Content.ReadFromJsonAsync<CreateSessionResponse> (TestContext.Current.CancellationToken);
     Assert.NotNull (payload);
     Assert.False (string.IsNullOrWhiteSpace (payload.SessionId));
   }
@@ -31,160 +62,169 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
   [Fact]
   public async Task SendMessage_ReturnsReply_ForExistingSession ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var response = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{sessionId}/messages",
-            new SendMessageRequest("hello"),
-            TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages",
+                                                                       value: new SendMessageRequest ("hello"),
+                                                                       cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.OK, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
 
-    var payload = await response.Content.ReadFromJsonAsync<SendMessageResponse>(TestContext.Current.CancellationToken);
+    SendMessageResponse? payload =
+      await response.Content.ReadFromJsonAsync<SendMessageResponse> (TestContext.Current.CancellationToken);
     Assert.NotNull (payload);
-    Assert.Equal (sessionId, payload.SessionId);
-    Assert.Equal ("echo:hello", payload.Content);
+    Assert.Equal (expected: sessionId,    actual: payload.SessionId);
+    Assert.Equal (expected: "echo:hello", actual: payload.Content);
   }
 
   [Fact]
   public async Task SendMessage_ReturnsNotFound_ForMissingSession ()
   {
-    var response = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{Guid.NewGuid()}/messages",
-            new SendMessageRequest("hello"),
-            TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{Guid.NewGuid ()}/messages",
+                                                                       value: new SendMessageRequest ("hello"),
+                                                                       cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.NotFound, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.NotFound, actual: response.StatusCode);
   }
 
   [Fact]
   public async Task StreamMessage_ReturnsSsePayload_ForExistingSession ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var response = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{sessionId}/messages/stream",
-            new SendMessageRequest("hello"),
-            TestContext.Current.CancellationToken);
+    HttpResponseMessage response =
+      await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages/stream",
+                                          value: new SendMessageRequest ("hello"),
+                                          cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.OK, response.StatusCode);
-    Assert.StartsWith ("text/event-stream", response.Content.Headers.ContentType?.MediaType, StringComparison.Ordinal);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
+    Assert.StartsWith (expectedStartString: "text/event-stream",
+                       actualString: response.Content.Headers.ContentType?.MediaType,
+                       comparisonType: StringComparison.Ordinal);
 
-    var streamPayload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-    Assert.Contains ("data: echo:hello", streamPayload, StringComparison.Ordinal);
-    Assert.Contains ("data: line one", streamPayload, StringComparison.Ordinal);
-    Assert.Contains ("data: line two", streamPayload, StringComparison.Ordinal);
+    string streamPayload = await response.Content.ReadAsStringAsync (TestContext.Current.CancellationToken);
+    Assert.Contains (expectedSubstring: "data: echo:hello", actualString: streamPayload, comparisonType: StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "data: line one",   actualString: streamPayload, comparisonType: StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "data: line two",   actualString: streamPayload, comparisonType: StringComparison.Ordinal);
   }
 
   [Fact]
   public async Task StreamMessage_ReturnsNotFound_ForMissingSession ()
   {
-    var response = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{Guid.NewGuid()}/messages/stream",
-            new SendMessageRequest("hello"),
-            TestContext.Current.CancellationToken);
+    HttpResponseMessage response =
+      await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{Guid.NewGuid ()}/messages/stream",
+                                          value: new SendMessageRequest ("hello"),
+                                          cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.NotFound, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.NotFound, actual: response.StatusCode);
   }
 
   [Fact]
   public async Task GetSession_ReturnsSessionInfo_ForExistingSession ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var response = await this._client.GetAsync($"/api/chat/sessions/{sessionId}", TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                                                cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.OK, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
 
-    var payload = await response.Content.ReadFromJsonAsync<SessionInfoResponse>(TestContext.Current.CancellationToken);
+    SessionInfoResponse? payload =
+      await response.Content.ReadFromJsonAsync<SessionInfoResponse> (TestContext.Current.CancellationToken);
     Assert.NotNull (payload);
-    Assert.Equal (sessionId, payload.SessionId);
-    Assert.NotEqual (default, payload.CreatedAt);
+    Assert.Equal (expected: sessionId, actual: payload.SessionId);
+    Assert.NotEqual (expected: default, actual: payload.CreatedAt);
   }
 
   [Fact]
   public async Task DeleteSession_ReturnsNoContent_ForExistingSession ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var response = await this._client.DeleteAsync($"/api/chat/sessions/{sessionId}",
-      TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.DeleteAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                                                   cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.NoContent, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.NoContent, actual: response.StatusCode);
   }
 
   [Fact]
   public async Task DeleteSession_ReturnsNotFound_ForMissingSession ()
   {
-    var response = await this._client.DeleteAsync($"/api/chat/sessions/{Guid.NewGuid()}",
-      TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.DeleteAsync (requestUri: $"/api/chat/sessions/{Guid.NewGuid ()}",
+                                                                   cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.NotFound, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.NotFound, actual: response.StatusCode);
   }
 
   [Fact]
   public async Task SessionLifecycle_CompletesAcrossEndpoints ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var sendResponse = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{sessionId}/messages",
-            new SendMessageRequest("workflow"),
-            TestContext.Current.CancellationToken);
-    Assert.Equal (HttpStatusCode.OK, sendResponse.StatusCode);
+    HttpResponseMessage sendResponse = await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages",
+                                                                           value: new SendMessageRequest ("workflow"),
+                                                                           cancellationToken: TestContext.Current
+                                                                                                         .CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: sendResponse.StatusCode);
 
-    var getResponse = await this._client.GetAsync($"/api/chat/sessions/{sessionId}",
-      TestContext.Current.CancellationToken);
-    Assert.Equal (HttpStatusCode.OK, getResponse.StatusCode);
+    HttpResponseMessage getResponse = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                                                   cancellationToken: TestContext.Current.CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: getResponse.StatusCode);
 
-    var deleteResponse = await this._client.DeleteAsync($"/api/chat/sessions/{sessionId}",
-      TestContext.Current.CancellationToken);
-    Assert.Equal (HttpStatusCode.NoContent, deleteResponse.StatusCode);
+    HttpResponseMessage deleteResponse = await this._client.DeleteAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                                                         cancellationToken: TestContext.Current.CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.NoContent, actual: deleteResponse.StatusCode);
 
-    var getDeletedResponse = await this._client.GetAsync($"/api/chat/sessions/{sessionId}",
-      TestContext.Current.CancellationToken);
-    Assert.Equal (HttpStatusCode.NotFound, getDeletedResponse.StatusCode);
+    HttpResponseMessage getDeletedResponse = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                                                          cancellationToken: TestContext.Current.CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.NotFound, actual: getDeletedResponse.StatusCode);
   }
 
   [Fact]
   public async Task SendMessage_ReturnsConflict_AndInvalidatesSession_ForStaleSession ()
   {
-    var sessionId = await this.CreateSessionAsync();
-    this.ClearAgentConversations();
+    string sessionId = await this.CreateSessionAsync ();
+    this.ClearAgentConversations ();
 
-    var sendResponse = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{sessionId}/messages",
-            new SendMessageRequest("hello"),
-            TestContext.Current.CancellationToken);
+    HttpResponseMessage sendResponse = await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages",
+                                                                           value: new SendMessageRequest ("hello"),
+                                                                           cancellationToken: TestContext.Current
+                                                                                                         .CancellationToken);
 
-    Assert.Equal (HttpStatusCode.Conflict, sendResponse.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.Conflict, actual: sendResponse.StatusCode);
 
-    var error = await sendResponse.Content.ReadFromJsonAsync<ChatErrorResponse>(TestContext.Current.CancellationToken);
+    ChatErrorResponse? error =
+      await sendResponse.Content.ReadFromJsonAsync<ChatErrorResponse> (TestContext.Current.CancellationToken);
     Assert.NotNull (error);
-    Assert.Equal ("session_stale", error.Code);
+    Assert.Equal (expected: "session_stale", actual: error.Code);
 
-    var getResponse = await this._client.GetAsync($"/api/chat/sessions/{sessionId}", TestContext.Current.CancellationToken);
-    Assert.Equal (HttpStatusCode.NotFound, getResponse.StatusCode);
+    HttpResponseMessage getResponse = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                                                   cancellationToken: TestContext.Current.CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.NotFound, actual: getResponse.StatusCode);
   }
 
   [Fact]
   public async Task StreamMessage_ReturnsFailedEventPayload_WithSessionStaleCode_ForStaleSession ()
   {
-    var sessionId = await this.CreateSessionAsync();
-    this.ClearAgentConversations();
+    string sessionId = await this.CreateSessionAsync ();
+    this.ClearAgentConversations ();
 
-    var response = await this._client.PostAsJsonAsync(
-            $"/api/chat/sessions/{sessionId}/messages/stream",
-            new SendMessageRequest("hello"),
-            TestContext.Current.CancellationToken);
+    HttpResponseMessage response =
+      await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages/stream",
+                                          value: new SendMessageRequest ("hello"),
+                                          cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal (HttpStatusCode.OK, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
 
-    var streamPayload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-    Assert.Contains ("event: failed", streamPayload, StringComparison.Ordinal);
-    Assert.Contains ("\"Code\":\"session_stale\"", streamPayload, StringComparison.Ordinal);
-    Assert.Contains ("\"Message\":", streamPayload, StringComparison.Ordinal);
-    Assert.Contains ("\"IsRetryable\":false", streamPayload, StringComparison.Ordinal);
+    string streamPayload = await response.Content.ReadAsStringAsync (TestContext.Current.CancellationToken);
+    Assert.Contains (expectedSubstring: "event: failed", actualString: streamPayload, comparisonType: StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "\"Code\":\"session_stale\"",
+                     actualString: streamPayload,
+                     comparisonType: StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "\"Message\":", actualString: streamPayload, comparisonType: StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "\"IsRetryable\":false",
+                     actualString: streamPayload,
+                     comparisonType: StringComparison.Ordinal);
   }
 
   [Fact]
@@ -192,49 +232,62 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
   {
     const string correlationId = "test-correlation-id";
 
-    using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat/sessions")
-    {
-      Content = JsonContent.Create(new { })
-    };
+    using HttpRequestMessage request = new HttpRequestMessage (method: HttpMethod.Post, requestUri: "/api/chat/sessions")
+                                       {
+                                         Content = JsonContent.Create (new { })
+                                       };
 
-    _ = request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId);
+    _ = request.Headers.TryAddWithoutValidation (name: "X-Correlation-Id", value: correlationId);
 
-    var response = await this._client.SendAsync(request, TestContext.Current.CancellationToken);
+    HttpResponseMessage response =
+      await this._client.SendAsync (request: request, cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var values));
-    Assert.Equal(correlationId, Assert.Single(values));
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
+    Assert.True (response.Headers.TryGetValues (name: "X-Correlation-Id", values: out IEnumerable<string>? values));
+    Assert.Equal (expected: correlationId, actual: Assert.Single (values));
   }
 
   [Fact]
   public async Task StreamMessage_ConcurrentRequestsRemainSessionIsolated ()
   {
-    var prompts = Enumerable.Range(1, 6).Select(i => $"concurrent-{i}").ToArray();
-    var sessions = new List<string>();
+    string[]     prompts  = Enumerable.Range (start: 1, count: 6).Select (i => $"concurrent-{i}").ToArray ();
+    List<string> sessions = new List<string> ();
 
-    foreach (var _ in prompts)
+    foreach (string _ in prompts)
     {
-      sessions.Add(await this.CreateSessionAsync());
+      sessions.Add (await this.CreateSessionAsync ());
     }
 
-    var tasks = sessions
-        .Zip(prompts, static (sessionId, prompt) => (sessionId, prompt))
-        .Select(async x =>
-        {
-          var payload = await this.StreamSessionMessageAsync(x.sessionId, x.prompt, CancellationToken.None);
-          return (x.prompt, payload);
-        })
-        .ToArray();
+    Task<(string prompt, string payload)>[] tasks = sessions
+                                                   .Zip (second: prompts,
+                                                         resultSelector: static (sessionId, prompt) => (sessionId, prompt))
+                                                   .Select (async x =>
+                                                            {
+                                                              string payload =
+                                                                await this.StreamSessionMessageAsync (sessionId: x.sessionId,
+                                                                                                      prompt: x.prompt,
+                                                                                                      cancellationToken:
+                                                                                                      CancellationToken.None);
 
-    var results = await Task.WhenAll(tasks);
+                                                              return (x.prompt, payload);
+                                                            })
+                                                   .ToArray ();
 
-    foreach (var result in results)
+    (string prompt, string payload)[] results = await Task.WhenAll (tasks);
+
+    foreach ((string prompt, string payload) result in results)
     {
-      Assert.Contains($"data: echo:{result.prompt}", result.payload, StringComparison.Ordinal);
+      Assert.Contains (expectedSubstring: $"data: echo:{result.prompt}",
+                       actualString: result.payload,
+                       comparisonType: StringComparison.Ordinal);
 
-      foreach (var otherPrompt in prompts.Where(p => !string.Equals(p, result.prompt, StringComparison.Ordinal)))
+      foreach (string otherPrompt in prompts.Where (p => !string.Equals (a: p,
+                                                                         b: result.prompt,
+                                                                         comparisonType: StringComparison.Ordinal)))
       {
-        Assert.DoesNotContain($"data: echo:{otherPrompt}", result.payload, StringComparison.Ordinal);
+        Assert.DoesNotContain (expectedSubstring: $"data: echo:{otherPrompt}",
+                               actualString: result.payload,
+                               comparisonType: StringComparison.Ordinal);
       }
     }
   }
@@ -242,121 +295,142 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
   [Fact]
   public async Task StreamMessage_MixedCancellationAndCompletion_BehavesAsExpected ()
   {
-    this.ConfigureFakeStreamChunkDelay(TimeSpan.FromMilliseconds(250));
+    this.ConfigureFakeStreamChunkDelay (TimeSpan.FromMilliseconds (250));
 
     try
     {
-      var prompts = Enumerable.Range(1, 6).Select(i => $"cancel-mix-{i}").ToArray();
-      var sessions = new List<string>();
+      string[]     prompts  = Enumerable.Range (start: 1, count: 6).Select (i => $"cancel-mix-{i}").ToArray ();
+      List<string> sessions = new List<string> ();
 
-      foreach (var _ in prompts)
+      foreach (string _ in prompts)
       {
-        sessions.Add(await this.CreateSessionAsync());
+        sessions.Add (await this.CreateSessionAsync ());
       }
 
-      var tasks = sessions
-          .Zip(prompts, static (sessionId, prompt) => (sessionId, prompt))
-          .Select((x, index) => this.RunStreamWithOptionalCancellationAsync(
-              x.sessionId,
-              x.prompt,
-              cancelAfter: index % 2 == 0 ? TimeSpan.FromMilliseconds(80) : null))
-          .ToArray();
+      Task<StreamExecutionOutcome>[] tasks = sessions
+                                            .Zip (second: prompts,
+                                                  resultSelector: static (sessionId, prompt) => (sessionId, prompt))
+                                            .Select ((x, index)
+                                                       => this.RunStreamWithOptionalCancellationAsync (sessionId: x.sessionId,
+                                                                                                       prompt: x.prompt,
+                                                                                                       cancelAfter: index % 2 == 0
+                                                                                                                      ? TimeSpan
+                                                                                                                       .FromMilliseconds (80)
+                                                                                                                      : null))
+                                            .ToArray ();
 
-      var outcomes = await Task.WhenAll(tasks);
+      StreamExecutionOutcome[] outcomes = await Task.WhenAll (tasks);
 
-      Assert.Contains(outcomes, static o => o == StreamExecutionOutcome.Canceled);
-      Assert.Contains(outcomes, static o => o == StreamExecutionOutcome.Completed);
+      Assert.Contains (collection: outcomes, filter: static o => o == StreamExecutionOutcome.Canceled);
+      Assert.Contains (collection: outcomes, filter: static o => o == StreamExecutionOutcome.Completed);
     }
     finally
     {
-      this.ResetFakeStreamChunkDelay();
+      this.ResetFakeStreamChunkDelay ();
     }
   }
 
   [Fact]
   public async Task StreamMessage_SseEventOrder_IsStartedThenDeltaThenCompleted ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var payload = await this.StreamSessionMessageAsync(sessionId, "ordering-check", TestContext.Current.CancellationToken);
+    string payload = await this.StreamSessionMessageAsync (sessionId: sessionId,
+                                                           prompt: "ordering-check",
+                                                           cancellationToken: TestContext.Current.CancellationToken);
 
-    var startedIndex = payload.IndexOf("event: started", StringComparison.Ordinal);
-    var deltaIndex = payload.IndexOf("event: delta", StringComparison.Ordinal);
-    var completedIndex = payload.IndexOf("event: completed", StringComparison.Ordinal);
+    int startedIndex   = payload.IndexOf (value: "event: started",   comparisonType: StringComparison.Ordinal);
+    int deltaIndex     = payload.IndexOf (value: "event: delta",     comparisonType: StringComparison.Ordinal);
+    int completedIndex = payload.IndexOf (value: "event: completed", comparisonType: StringComparison.Ordinal);
 
-    Assert.True(startedIndex >= 0, "Expected started event in stream payload.");
-    Assert.True(deltaIndex > startedIndex, "Expected delta event to appear after started event.");
-    Assert.True(completedIndex > deltaIndex, "Expected completed event to appear after delta event.");
+    Assert.True (condition: startedIndex   >= 0,           userMessage: "Expected started event in stream payload.");
+    Assert.True (condition: deltaIndex     > startedIndex, userMessage: "Expected delta event to appear after started event.");
+    Assert.True (condition: completedIndex > deltaIndex,   userMessage: "Expected completed event to appear after delta event.");
   }
 
   [Fact]
   public async Task SessionLifecycle_WritesAppendOnlyEventLogEntries ()
   {
-    var sessionId = await this.CreateSessionAsync();
+    string sessionId = await this.CreateSessionAsync ();
 
-    var sendResponse = await this._client.PostAsJsonAsync(
-        $"/api/chat/sessions/{sessionId}/messages",
-        new SendMessageRequest("event-log"),
-        TestContext.Current.CancellationToken);
-    Assert.Equal(HttpStatusCode.OK, sendResponse.StatusCode);
+    HttpResponseMessage sendResponse = await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages",
+                                                                           value: new SendMessageRequest ("event-log"),
+                                                                           cancellationToken: TestContext.Current
+                                                                                                         .CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: sendResponse.StatusCode);
 
-    var deleteResponse = await this._client.DeleteAsync($"/api/chat/sessions/{sessionId}", TestContext.Current.CancellationToken);
-    Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+    HttpResponseMessage deleteResponse =
+      await this._client.DeleteAsync (requestUri: $"/api/chat/sessions/{sessionId}",
+                                      cancellationToken: TestContext.Current.CancellationToken);
+    Assert.Equal (expected: HttpStatusCode.NoContent, actual: deleteResponse.StatusCode);
 
-    var logPath = Path.Combine(this._factory.WorkspaceRoot, "sessions", "logs", $"{sessionId}.events.ndjson");
-    Assert.True(File.Exists(logPath));
+    string logPath = Path.Combine (path1: this._factory.WorkspaceRoot,
+                                   path2: "sessions",
+                                   path3: "logs",
+                                   path4: $"{sessionId}.events.ndjson");
+    Assert.True (File.Exists (logPath));
 
-    var lines = await File.ReadAllLinesAsync(logPath, TestContext.Current.CancellationToken);
-    Assert.True(lines.Length >= 3);
-    Assert.Contains(lines, static line => line.Contains("\"eventType\":\"session.created.v1\"", StringComparison.Ordinal));
-    Assert.Contains(lines, static line => line.Contains("\"eventType\":\"chat.message.sent.v1\"", StringComparison.Ordinal));
-    Assert.Contains(lines, static line => line.Contains("\"eventType\":\"session.deleted.v1\"", StringComparison.Ordinal));
+    string[] lines = await File.ReadAllLinesAsync (path: logPath, cancellationToken: TestContext.Current.CancellationToken);
+    Assert.True (lines.Length >= 3);
+    Assert.Contains (collection: lines,
+                     filter: static line => line.Contains (value: "\"eventType\":\"session.created.v1\"",
+                                                           comparisonType: StringComparison.Ordinal));
+    Assert.Contains (collection: lines,
+                     filter: static line => line.Contains (value: "\"eventType\":\"chat.message.sent.v1\"",
+                                                           comparisonType: StringComparison.Ordinal));
+    Assert.Contains (collection: lines,
+                     filter: static line => line.Contains (value: "\"eventType\":\"session.deleted.v1\"",
+                                                           comparisonType: StringComparison.Ordinal));
   }
 
   private void ClearAgentConversations ()
   {
-    var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
+    FakeAgentConversationService? fake =
+      this._factory.Services.GetRequiredService<IAgentConversationService> () as FakeAgentConversationService;
     Assert.NotNull (fake);
     fake.ClearConversations ();
   }
 
   private void ConfigureFakeStreamChunkDelay (TimeSpan delay)
   {
-    var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
-    Assert.NotNull(fake);
-    fake.SetStreamChunkDelay(delay);
+    FakeAgentConversationService? fake =
+      this._factory.Services.GetRequiredService<IAgentConversationService> () as FakeAgentConversationService;
+    Assert.NotNull (fake);
+    fake.SetStreamChunkDelay (delay);
   }
 
   private void ResetFakeStreamChunkDelay ()
   {
-    var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;
-    Assert.NotNull(fake);
-    fake.ResetStreamChunkDelay();
+    FakeAgentConversationService? fake =
+      this._factory.Services.GetRequiredService<IAgentConversationService> () as FakeAgentConversationService;
+    Assert.NotNull (fake);
+    fake.ResetStreamChunkDelay ();
   }
 
   private async Task<string> StreamSessionMessageAsync (string sessionId, string prompt, CancellationToken cancellationToken)
   {
-    var response = await this._client.PostAsJsonAsync(
-        $"/api/chat/sessions/{sessionId}/messages/stream",
-        new SendMessageRequest(prompt),
-        cancellationToken);
+    HttpResponseMessage response =
+      await this._client.PostAsJsonAsync (requestUri: $"/api/chat/sessions/{sessionId}/messages/stream",
+                                          value: new SendMessageRequest (prompt),
+                                          cancellationToken: cancellationToken);
 
-    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    return await response.Content.ReadAsStringAsync(cancellationToken);
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
+
+    return await response.Content.ReadAsStringAsync (cancellationToken);
   }
 
-  private async Task<StreamExecutionOutcome> RunStreamWithOptionalCancellationAsync (
-      string sessionId,
-      string prompt,
-      TimeSpan? cancelAfter)
+  private async Task<StreamExecutionOutcome> RunStreamWithOptionalCancellationAsync (string    sessionId,
+                                                                                     string    prompt,
+                                                                                     TimeSpan? cancelAfter)
   {
-    using var cts = cancelAfter.HasValue
-      ? new CancellationTokenSource(cancelAfter.Value)
-      : new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using CancellationTokenSource cts = cancelAfter.HasValue
+                                          ? new CancellationTokenSource (cancelAfter.Value)
+                                          : new CancellationTokenSource (TimeSpan.FromSeconds (5));
 
     try
     {
-      _ = await this.StreamSessionMessageAsync(sessionId, prompt, cts.Token);
+      _ = await this.StreamSessionMessageAsync (sessionId: sessionId, prompt: prompt, cancellationToken: cts.Token);
+
       return StreamExecutionOutcome.Completed;
     }
     catch (OperationCanceledException)
@@ -365,18 +439,12 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
     }
   }
 
-  private enum StreamExecutionOutcome
-  {
-    Completed,
-    Canceled
-  }
-
   private async Task<string> CreateSessionAsync ()
   {
-    var response = await this._client.PostAsJsonAsync("/api/chat/sessions", new { });
+    HttpResponseMessage response = await this._client.PostAsJsonAsync (requestUri: "/api/chat/sessions", value: new { });
     _ = response.EnsureSuccessStatusCode ();
 
-    var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
+    CreateSessionResponse? payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse> ();
     Assert.NotNull (payload);
 
     return payload.SessionId;
@@ -384,127 +452,131 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
 }
 
 // Isolated tests for the session notification SSE endpoint.
-[Collection(IntegrationTestCollection.Name)]
+[Collection (IntegrationTestCollection.Name)]
 public sealed class NotificationEndpointTests (RavenCoreWebAppFactory factory)
 {
+  private readonly HttpClient             _client  = factory.CreateClient ();
   private readonly RavenCoreWebAppFactory _factory = factory;
-  private readonly HttpClient _client = factory.CreateClient();
 
   [Fact]
   public async Task Notifications_ReturnsNotFound_ForUnknownSession ()
   {
-    var response = await this._client.GetAsync(
-        $"/api/chat/sessions/{Guid.NewGuid()}/notifications",
-        TestContext.Current.CancellationToken);
+    HttpResponseMessage response = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{Guid.NewGuid ()}/notifications",
+                                                                cancellationToken: TestContext.Current.CancellationToken);
 
-    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    Assert.Equal (expected: HttpStatusCode.NotFound, actual: response.StatusCode);
   }
 
   [Fact]
   public async Task Notifications_ReturnsConflict_WhenAlreadySubscribed ()
   {
-    var hub = this._factory.Services.GetRequiredService<ISessionNotificationHub>();
-    var sessionId = await this.CreateSessionAsync();
+    ISessionNotificationHub hub       = this._factory.Services.GetRequiredService<ISessionNotificationHub> ();
+    string                  sessionId = await this.CreateSessionAsync ();
 
     // Hold the subscription slot directly via the hub — equivalent to having
     // a live HTTP connection open for this session. The hub is a singleton so
     // the same instance is used by both the test and the server endpoint.
-    Assert.True(hub.TrySubscribe(sessionId));
+    Assert.True (hub.TrySubscribe (sessionId));
 
     try
     {
       // The HTTP endpoint should find the slot is already taken and return 409.
-      var response = await this._client.GetAsync(
-          $"/api/chat/sessions/{sessionId}/notifications",
-          TestContext.Current.CancellationToken);
+      HttpResponseMessage response = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}/notifications",
+                                                                  cancellationToken: TestContext.Current.CancellationToken);
 
-      Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+      Assert.Equal (expected: HttpStatusCode.Conflict, actual: response.StatusCode);
     }
     finally
     {
-      hub.Complete(sessionId);
+      hub.Complete (sessionId);
     }
   }
 
   [Fact]
   public async Task Notifications_DeliversServerShutdownEvent_ToSubscribedSession ()
   {
-    var fakeShutdown = this._factory.Services.GetRequiredService<FakeShutdownCoordinator>();
-    fakeShutdown.Reset();
+    FakeShutdownCoordinator fakeShutdown = this._factory.Services.GetRequiredService<FakeShutdownCoordinator> ();
+    fakeShutdown.Reset ();
 
-    var sessionId = await this.CreateSessionAsync();
-    var hub = this._factory.Services.GetRequiredService<ISessionNotificationHub>();
+    string                  sessionId = await this.CreateSessionAsync ();
+    ISessionNotificationHub hub       = this._factory.Services.GetRequiredService<ISessionNotificationHub> ();
 
     // Start the GET request WITHOUT awaiting — this sends the HTTP request and
     // lets the server endpoint run concurrently.
-    using var subCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    var getTask = this._client.GetAsync(
-        $"/api/chat/sessions/{sessionId}/notifications",
-        subCts.Token);
+    using CancellationTokenSource subCts = new CancellationTokenSource (TimeSpan.FromSeconds (10));
+    Task<HttpResponseMessage> getTask = this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}/notifications",
+                                                               cancellationToken: subCts.Token);
 
     // Poll the hub until the session appears as a subscriber. This is
     // deterministic: the endpoint calls TrySubscribe synchronously in its
     // request body, so once the session ID appears in the hub we know the
     // server is inside the await foreach and ready to receive notifications.
-    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-    while (!hub.GetSubscribedSessionIds().Contains(sessionId))
+    DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds (5);
+
+    while (!hub.GetSubscribedSessionIds ().Contains (sessionId))
     {
       if (DateTimeOffset.UtcNow > deadline)
-        throw new TimeoutException("Session never appeared in notification hub within 5 seconds.");
+      {
+        throw new TimeoutException ("Session never appeared in notification hub within 5 seconds.");
+      }
 
-      await Task.Delay(TimeSpan.FromMilliseconds(10), TestContext.Current.CancellationToken);
+      await Task.Delay (delay: TimeSpan.FromMilliseconds (10), cancellationToken: TestContext.Current.CancellationToken);
     }
 
     // Push a shutdown notification and immediately complete the channel so the
     // endpoint's await foreach exits and the HTTP response is finalised.
-    var envelope = new ServerNotificationEnvelope(
-        MessageMetadata.Create("server.shutdown.v1"),
-        new ServerShutdownNotification(IsRestart: false));
+    ServerNotificationEnvelope envelope = new ServerNotificationEnvelope (Metadata: MessageMetadata.Create ("server.shutdown.v1"),
+                                                                          Notification: new
+                                                                            ServerShutdownNotification (IsRestart: false));
 
-    await hub.BroadcastAsync(envelope, TestContext.Current.CancellationToken);
-    hub.Complete(sessionId);
+    await hub.BroadcastAsync (envelope: envelope, cancellationToken: TestContext.Current.CancellationToken);
+    hub.Complete (sessionId);
 
     // Now await the HTTP response (which should be available immediately).
-    using var response = await getTask;
-    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    Assert.StartsWith("text/event-stream", response.Content.Headers.ContentType?.MediaType, StringComparison.Ordinal);
+    using HttpResponseMessage response = await getTask;
+    Assert.Equal (expected: HttpStatusCode.OK, actual: response.StatusCode);
+    Assert.StartsWith (expectedStartString: "text/event-stream",
+                       actualString: response.Content.Headers.ContentType?.MediaType,
+                       comparisonType: StringComparison.Ordinal);
 
-    var ssePayload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+    string ssePayload = await response.Content.ReadAsStringAsync (TestContext.Current.CancellationToken);
 
-    Assert.Contains("event: server_shutdown", ssePayload, StringComparison.Ordinal);
-    Assert.Contains("data: shutdown", ssePayload, StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "event: server_shutdown",
+                     actualString: ssePayload,
+                     comparisonType: StringComparison.Ordinal);
+    Assert.Contains (expectedSubstring: "data: shutdown", actualString: ssePayload, comparisonType: StringComparison.Ordinal);
   }
 
   [Fact]
   public async Task Notifications_Returns503_WhenShutdownInProgress ()
   {
-    var fakeShutdown = this._factory.Services.GetRequiredService<FakeShutdownCoordinator>();
-    fakeShutdown.Reset();
+    FakeShutdownCoordinator fakeShutdown = this._factory.Services.GetRequiredService<FakeShutdownCoordinator> ();
+    fakeShutdown.Reset ();
 
-    await fakeShutdown.RequestShutdownAsync(restart: false, TestContext.Current.CancellationToken);
+    await fakeShutdown.RequestShutdownAsync (restart: false, cancellationToken: TestContext.Current.CancellationToken);
 
     try
     {
-      var sessionId = await this.CreateSessionAsync();
+      string sessionId = await this.CreateSessionAsync ();
 
-      var response = await this._client.GetAsync(
-          $"/api/chat/sessions/{sessionId}/notifications",
-          TestContext.Current.CancellationToken);
+      HttpResponseMessage response = await this._client.GetAsync (requestUri: $"/api/chat/sessions/{sessionId}/notifications",
+                                                                  cancellationToken: TestContext.Current.CancellationToken);
 
-      Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+      Assert.Equal (expected: HttpStatusCode.ServiceUnavailable, actual: response.StatusCode);
     }
     finally
     {
-      fakeShutdown.Reset();
+      fakeShutdown.Reset ();
     }
   }
 
   private async Task<string> CreateSessionAsync ()
   {
-    var response = await this._client.PostAsJsonAsync("/api/chat/sessions", new { });
-    _ = response.EnsureSuccessStatusCode();
-    var payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse>();
-    Assert.NotNull(payload);
+    HttpResponseMessage response = await this._client.PostAsJsonAsync (requestUri: "/api/chat/sessions", value: new { });
+    _ = response.EnsureSuccessStatusCode ();
+    CreateSessionResponse? payload = await response.Content.ReadFromJsonAsync<CreateSessionResponse> ();
+    Assert.NotNull (payload);
+
     return payload.SessionId;
   }
 }

@@ -1,4 +1,22 @@
+#region header
+
+// Raven.Core.Tests - FakeShutdownCoordinator.cs
+// 
+// Alistair J. R. Young
+// Arkane Systems
+// 
+// Copyright Arkane Systems 2012-2026.  All rights reserved.
+// 
+// Created: 2026-04-26 9:45 AM
+
+#endregion
+
+#region using
+
 using ArkaneSystems.Raven.Core.Application.Admin;
+using JetBrains.Annotations;
+
+#endregion
 
 namespace ArkaneSystems.Raven.Core.Tests.Integration.TestHost.Fakes;
 
@@ -13,14 +31,15 @@ public sealed class FakeShutdownCoordinator : IShutdownCoordinator
 
   public Task RequestShutdownAsync (bool restart, CancellationToken cancellationToken = default)
   {
-    IsShutdownRequested = true;
-    LastRequestedRestart = restart;
+    this.IsShutdownRequested  = true;
+    this.LastRequestedRestart = restart;
+
     return Task.CompletedTask;
   }
 
   public void Reset ()
   {
-    IsShutdownRequested = false;
-    LastRequestedRestart = null;
+    this.IsShutdownRequested  = false;
+    this.LastRequestedRestart = null;
   }
 }
