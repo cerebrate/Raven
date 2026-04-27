@@ -1,6 +1,7 @@
 using ArkaneSystems.Raven.Client.Console.Models;
 using ArkaneSystems.Raven.Client.Console.Rendering;
 using ArkaneSystems.Raven.Client.Console.Services;
+using ArkaneSystems.Raven.Contracts.Chat;
 
 namespace ArkaneSystems.Raven.Client.Console;
 
@@ -48,12 +49,12 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
 
       if (sessions.Count > 0)
       {
-        var input = await ReadLineWithCancellationAsync (cancellationToken);
-        if (!cancellationToken.IsCancellationRequested && int.TryParse (input?.Trim (), out var choice) && choice >= 1 && choice <= sessions.Count)
+        var raw = await ReadLineWithCancellationAsync (cancellationToken);
+        var chosenSession = ResolveSelectionChoice (raw, sessions);
+        if (chosenSession is not null)
         {
-          var picked = sessions[choice - 1];
-          state.SessionId = picked.SessionId;
-          sessionTitle = picked.Title;
+          state.SessionId = chosenSession.SessionId;
+          sessionTitle = chosenSession.Title;
           isResumed = true;
         }
         else
@@ -362,5 +363,22 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     await Task.WhenAny (readTask, Task.Delay (Timeout.Infinite, cancellationToken));
 
     return cancellationToken.IsCancellationRequested ? null : await readTask;
+  }
+
+  // Parses the raw input from a session-selection menu and returns the chosen
+  // session summary, or null if the user chose to start a new session (input
+  // is empty, "0", or an out-of-range number).
+  private static SessionSummary? ResolveSelectionChoice (string? raw, IReadOnlyList<SessionSummary> sessions)
+  {
+    if (string.IsNullOrWhiteSpace (raw))
+      return null;
+
+    if (!int.TryParse (raw.Trim (), out var choice))
+      return null;
+
+    if (choice < 1 || choice > sessions.Count)
+      return null;
+
+    return sessions[choice - 1];
   }
 }

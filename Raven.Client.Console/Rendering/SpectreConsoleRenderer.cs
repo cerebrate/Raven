@@ -143,16 +143,8 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.MarkupLine ("[grey]Press Enter to create a new session and continue.[/]");
   }
 
-  public void ShowGoodbye (string? sessionId = null)
-  {
-    AnsiConsole.WriteLine ();
-    if (!string.IsNullOrWhiteSpace (sessionId))
-    {
-      AnsiConsole.MarkupLine ($"[grey]Session [dim]{Markup.Escape (sessionId)}[/] is saved.[/]");
-      AnsiConsole.MarkupLine ($"[grey]Resume it next time with: [/][steelblue1]--resume {Markup.Escape (sessionId)}[/]");
-    }
-    AnsiConsole.MarkupLine ("[grey]Goodbye.[/]");
-  }
+  public void ShowGoodbye (string? sessionId = null) =>
+    ShowGoodbye (sessionId, title: null);
 
   // Overload that shows the title as well when the session has one.
   public void ShowGoodbye (string? sessionId, string? title)

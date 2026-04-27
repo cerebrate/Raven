@@ -70,6 +70,12 @@ public sealed class ChatApplicationService (
 
     var context = requestContext ?? ChatRequestContext.Empty;
 
+    // Load the current snapshot once. It gives us the existing title (so we
+    // don't derive a new one on every message) and CreatedAt (so we don't
+    // need a separate session store query).  Loaded before the agent call
+    // so we do not pay the I/O overhead after the response arrives.
+    var existingSnapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
+
     try
     {
       var reply = await conversations.SendMessageAsync(conversationId, content);
@@ -90,13 +96,12 @@ public sealed class ChatApplicationService (
       // can be quickly resumed without replaying the full event log.
       // Preserve any title already set on the snapshot; derive one from the first
       // user message if the session doesn't have one yet.
-      var sessionInfo = await sessions.GetSessionAsync (sessionId);
-      var existingSnapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
       var title = existingSnapshot?.Title ?? DeriveTitle (content);
+      var createdAt = existingSnapshot?.CreatedAt ?? (await sessions.GetSessionAsync (sessionId))?.CreatedAt ?? DateTimeOffset.UtcNow;
       await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
           SessionId:        sessionId,
           ConversationId:   conversationId,
-          CreatedAt:        sessionInfo?.CreatedAt ?? DateTimeOffset.UtcNow,
+          CreatedAt:        createdAt,
           LastActivityAt:   DateTimeOffset.UtcNow,
           SnapshotAt:       DateTimeOffset.UtcNow,
           EventLogSequence: envelope.Sequence,
@@ -166,6 +171,10 @@ public sealed class ChatApplicationService (
 
     var context = requestContext ?? ChatRequestContext.Empty;
 
+    // Load the current snapshot once before starting the stream so we have
+    // the existing title and CreatedAt without extra I/O after the response arrives.
+    var existingSnapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
+
     try
     {
       await foreach (var chunk in conversations.StreamMessageAsync(conversationId, content, cancellationToken))
@@ -186,13 +195,12 @@ public sealed class ChatApplicationService (
           userId: context.UserId,
           cancellationToken: cancellationToken);
 
-      var sessionInfo = await sessions.GetSessionAsync (sessionId);
-      var existingSnapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
       var title = existingSnapshot?.Title ?? DeriveTitle (content);
+      var createdAt = existingSnapshot?.CreatedAt ?? (await sessions.GetSessionAsync (sessionId))?.CreatedAt ?? DateTimeOffset.UtcNow;
       await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
           SessionId:        sessionId,
           ConversationId:   conversationId,
-          CreatedAt:        sessionInfo?.CreatedAt ?? DateTimeOffset.UtcNow,
+          CreatedAt:        createdAt,
           LastActivityAt:   DateTimeOffset.UtcNow,
           SnapshotAt:       DateTimeOffset.UtcNow,
           EventLogSequence: envelope.Sequence,
