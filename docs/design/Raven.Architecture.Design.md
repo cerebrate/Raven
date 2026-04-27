@@ -72,6 +72,7 @@ Workspace v1 structure:
 	  raven.db
 	logs/
 	snapshots/
+	agent-sessions/
   memory/
   heartbeat/
   artifacts/
@@ -1159,6 +1160,117 @@ Communication evolution path:
 - Use Microsoft Agent Framework / Foundry integration via `AIProjectClient`
 - keep model/deployment configuration external and mutable by config
 - keep SDK types behind adapters
+
+### Chat Completions API vs Assistants API — Architecture Decision
+
+Raven uses the **Chat Completions API** (via `ChatClient.AsAIAgent()` from `Microsoft.Agents.AI`).
+This was evaluated against switching to the **Assistants API** (server-managed threads) and rejected.
+The reasons are recorded here for future maintainers.
+
+#### What the Assistants API offers
+- Server-side thread persistence: Azure stores the full conversation; threads survive process restarts.
+- Built-in file search and code interpreter attached to the assistant or thread natively.
+- Structured run lifecycle (`requires_action` for tool calls, polling/streaming events).
+- Token counts returned per run automatically.
+
+#### Why Chat Completions is the right foundation for Raven
+
+Every major planned capability requires Raven to own and control the context window.
+The Assistants API's value proposition is that Azure manages that for you.
+These are in direct tension.
+
+**1. Context assembly (`IAgentMemoryAssembler` — P1)**
+Raven's `IAgentMemoryAssembler` must synthesize per-turn context from three memory tiers
+(scratchpad, episodic/MEMORY.md, semantic/vector store), apply confidence filtering and
+retrieval ranking, and wrap external content with prompt-injection safety tags.
+Chat Completions lets Raven build the `ChatMessage[]` list it sends each turn.
+Assistants API threads are opaque — Azure decides what fits in the context window.
+Injecting retrieved facts and tagged external content is incompatible with the thread model.
+
+**2. Soft consolidation / token budgeting (Epic 3 / cost control — P1)**
+When `prompt_tokens > 50%` of the model context limit, Raven archives the oldest message
+batch to `{sessionId}.history.jsonl` and maintains a consolidation cursor.
+With Chat Completions the message history is fully owned by Raven.
+With Assistants threads the history is server-side and opaque; selective archiving and
+hard circuit-breakers at 100% context are not achievable.
+
+**3. Tool policy gates (green/yellow/red tiers — P1)**
+Tool calls arrive in the `RunStreamingAsync` event stream.
+Raven intercepts them, applies policy, and — for yellow-tier calls — pauses the stream,
+prompts the user for confirmation, then continues.
+With Assistants API the run enters `requires_action` status; the async poll/resume model
+makes synchronous user-confirmation gates significantly more complex.
+
+**4. MCP gateway with dynamic tool registry (P1/P2)**
+Raven maintains its own `IMcpGateway`/`IMcpServerRegistry` whose tool definitions change
+as MCP servers connect and disconnect.
+With Chat Completions tools are constructed per-request from the current registry — fully
+dynamic.
+With Assistants API tools are configured on a server-side `Assistant` object; dynamic
+updates require API mutations on every registry change.
+
+**5. Dream process — read + inject memory (P1)**
+Dream reads the conversation history, classifies facts, and injects synthesized memory
+into future turns.
+With Chat Completions the history lives in the serialized `AgentSession` state bag —
+fully readable and controllable.
+With Assistants threads the history is server-side; injecting memory back into future runs
+means appending system/assistant messages, which can corrupt logical conversation flow or
+consume context budget in uncontrolled ways.
+
+**6. Latency and cost**
+Each Assistants API turn creates a server-side `Run` with its own lifecycle, startup
+queue, and management overhead.
+For an interactive personal REPL this is noticeable latency regression versus a direct
+streaming Chat Completions call.
+
+#### Summary
+
+| Capability | Chat Completions | Assistants API |
+|---|---|---|
+| Session persistence across restarts | Fixed via serialization (see below) | Built-in |
+| Context assembly (memory tiers) | Full control | Incompatible |
+| Soft consolidation / token budgeting | Implementable | Incompatible |
+| Tool policy gates (green/yellow/red) | Natural fit | Workable but complex |
+| MCP gateway with dynamic tool registry | Full control | Awkward |
+| Dream process (read + inject memory) | Straightforward | API-mediated, messy |
+| Interactive streaming latency | Optimal | Run overhead |
+
+The session-persistence gap was the strongest argument for the Assistants API but it is
+addressed by serialization (described below) — it does not justify losing control over
+every other planned capability.
+
+### Session persistence via `SerializeSessionAsync` (implemented)
+
+With Chat Completions the `AgentSession` (containing the full chat history) lives in
+`FoundryAgentConversationService._sessions`, an in-process `ConcurrentDictionary`.
+On process restart this dictionary is empty.
+
+**How persistence works (current implementation):**
+- After every successful `SendMessageAsync` or completed `StreamMessageAsync` the service
+  calls `AIAgent.SerializeSessionAsync(session)` → `JsonElement` → JSON string.
+- The JSON is written atomically to
+  `{workspace}/sessions/agent-sessions/{conversationId}.agent.json`
+  via `IAgentSessionStore` / `FileAgentSessionStore` (using `AtomicFileWriter`).
+- On the next request for a `conversationId` not found in `_sessions`, the service loads
+  the JSON from `IAgentSessionStore`, calls `AIAgent.DeserializeSessionAsync()`, re-inserts
+  the restored `AgentSession` into `_sessions`, and proceeds — transparent to all callers.
+- `ConversationNotFoundException` is only thrown when no persisted state exists, meaning
+  the session is genuinely unrecoverable.
+
+**Serialization format:**
+The JSON blob is the raw `AgentSessionStateBag` as produced by the SDK.
+It is treated as an opaque blob; callers must not parse or modify it.
+
+**Orphaned files:**
+When a session is explicitly deleted the corresponding snapshot and SQLite record are
+removed, but the `{conversationId}.agent.json` file is left in place.
+Orphaned files are harmless (the `conversationId` is no longer reachable via any live
+session mapping) and will be swept by a future workspace maintenance task.
+
+**Testing:**
+`FileAgentSessionStore` and `InMemoryAgentSessionStore` both have unit tests in
+`Raven.Core.Tests/Unit/Infrastructure/FileAgentSessionStoreTests.cs`.
 
 ---
 
