@@ -12,10 +12,31 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   public void ShowBanner ()
   {
     // FigletText renders large ASCII-art text using a built-in font.
+    // The separator Rule and optional session title are rendered by
+    // ShowSessionHeader once the session is created/resolved, so the
+    // Figlet is the only thing that belongs here.
     AnsiConsole.Write (
         new FigletText ("Raven")
             .Centered ()
             .Color (Color.SteelBlue1));
+  }
+
+  // Renders the session-title area between the Figlet banner and the chat prompt:
+  //   [centered title in steelblue1]   ← only when a title is known
+  //   ── AI Assistant ──               ← always
+  // Called once per session startup (including /resume or /new mid-loop).
+  public void ShowSessionHeader (string? title)
+  {
+    if (!string.IsNullOrWhiteSpace (title))
+    {
+      // Align centres the Markup renderable inside the terminal width so the
+      // title appears directly below the Figlet without surrounding dashes.
+      AnsiConsole.Write (
+          new Align (
+              new Markup ($"[steelblue1_1]{Markup.Escape (title)}[/]"),
+              HorizontalAlignment.Center));
+      AnsiConsole.WriteLine ();
+    }
 
     // Rule draws a horizontal line with optional centred label.
     AnsiConsole.Write (
@@ -135,6 +156,15 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   public void ShowWarning (string message)
   {
     AnsiConsole.MarkupLine ($"[yellow]Warning:[/] {Markup.Escape (message)}");
+    AnsiConsole.WriteLine ();
+  }
+
+  // Called inline in the chat flow after the first exchange for a new session,
+  // or whenever the title is regenerated.  A subtle single-line notice so the
+  // user knows the conversation has been given a name.
+  public void ShowTitleSet (string title)
+  {
+    AnsiConsole.MarkupLine ($"[grey]Session titled:[/] [steelblue1]{Markup.Escape (title)}[/]");
     AnsiConsole.WriteLine ();
   }
 

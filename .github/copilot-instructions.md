@@ -54,6 +54,13 @@ The architecture uses a **session-based conversation model** where clients obtai
 - Credentials: `DefaultAzureCredential` (CLI login in dev, managed identity in prod)
 - **API choice**: Chat Completions (not Assistants API) — see design doc section 12 for the full rationale
 
+### One-Off Agent Completions (IAgentService)
+- **IAgentService** provides stateless, sessionless completions via `CompleteAsync(systemPrompt, userMessage, ct)` — no conversation thread is created or modified
+- **FoundryAgentService** implements it with a direct `ChatClient.CompleteChatAsync` call (two-message array: system + user); Singleton, thread-safe
+- Use this for any server-internal AI task (classification, generation, formatting) that must not touch a user's context window
+- **Design rule**: never invoke inside the hot path of a user-visible response — call only after delivery or from background tasks
+- **Current consumer**: `ConversationTitleService` → `IConversationTitleService` — generates a ≤6-word title from the first exchange; best-effort (non-cancellation failures logged at Warning, returns null)
+
 ### API Contracts Layer
 - **Raven.Contracts** (shared DTOs): `CreateSessionRequest/Response`, `SendMessageRequest/Response`, `SessionInfoResponse`
 - All responses wrapped with `sessionId` for client state management
@@ -304,6 +311,8 @@ Workspace precedence (when implemented):
 - `ArkaneSystems.Raven.Core.Program` — Bootstrap and Foundry config
 - `ArkaneSystems.Raven.Core.Api.Endpoints.ChatEndpoints` — HTTP route definitions (chat + notification)
 - `ArkaneSystems.Raven.Core.AgentRuntime.Foundry.FoundryAgentConversationService` — Agent runtime logic
+- `ArkaneSystems.Raven.Core.AgentRuntime.IAgentService` — Stateless one-off completion interface; `FoundryAgentService` is the Foundry implementation
+- `ArkaneSystems.Raven.Core.Application.Chat.IConversationTitleService` — AI-generated session titles; `ConversationTitleService` consumes `IAgentService`
 - `ArkaneSystems.Raven.Core.Infrastructure.Filesystem` — Workspace path resolution and structure
 - `ArkaneSystems.Raven.Core.Bus.Contracts` — `IServerNotification`, `ServerNotificationEnvelope`, `ServerShutdownNotification`
 - `ArkaneSystems.Raven.Core.Bus.Dispatch` — `ISessionNotificationHub`, `InMemorySessionNotificationHub`
@@ -463,6 +472,13 @@ Raven.Core/
 1. Update `Foundry.SystemPrompt` in `appsettings.json` or via user-secrets
 2. No code change needed; restart the API server
 3. New conversations pick up the new prompt
+
+### Using IAgentService for a New One-Off AI Task
+1. Inject `IAgentService` into the consuming service
+2. Write a focused `systemPrompt` that constrains the model to the task (see `ConversationTitleService.TitleSystemPrompt` as a reference)
+3. Cap `userMessage` size if the input is unbounded (e.g., `text.Length > 500` → truncate + `"…"`)
+4. Wrap the call in try/catch; propagate `OperationCanceledException`, log and swallow everything else — all `IAgentService` tasks are best-effort
+5. Register the new service as Singleton in `Program.cs`; provide a null/stub double in integration test factory (`RavenCoreWebAppFactory`)
 
 ### Adding a New Session-Related Endpoint
 1. Add route handler in `ChatEndpoints.MapChatEndpoints()`

@@ -177,6 +177,8 @@ Current event types include:
 ### DI snapshot (current)
 - `IWorkspacePaths -> WorkspacePaths` (Singleton)
 - `IAgentConversationService -> FoundryAgentConversationService` (Singleton)
+- `IAgentService -> FoundryAgentService` (Singleton) — stateless one-off completions
+- `IConversationTitleService -> ConversationTitleService` (Singleton)
 - `ISessionStore -> SqliteSessionStore` (Scoped)
 - `ISessionEventLog -> FileSessionEventLog` (Singleton)
 - `IChatApplicationService -> ChatApplicationService` (Scoped)
@@ -1271,6 +1273,42 @@ session mapping) and will be swept by a future workspace maintenance task.
 **Testing:**
 `FileAgentSessionStore` and `InMemoryAgentSessionStore` both have unit tests in
 `Raven.Core.Tests/Unit/Infrastructure/FileAgentSessionStoreTests.cs`.
+
+### One-off agent completions via `IAgentService` (implemented)
+
+`IAgentService` is the general-purpose interface for making a single stateless completion
+call to the backing AI model **without creating or reusing a user conversation session**.
+It is the intended mechanism for any server-internal task that requires language model
+reasoning but must not pollute any user context window.
+
+**Interface** (`Raven.Core/AgentRuntime/IAgentService.cs`):
+```csharp
+Task<string> CompleteAsync(string systemPrompt, string userMessage, CancellationToken ct);
+```
+
+**Implementation** (`FoundryAgentService`):
+- Uses `ChatClient.CompleteChatAsync` with a two-message array: one `SystemChatMessage` and
+  one `UserChatMessage`.  No `AIAgent` session, no `AgentSession`, no history.
+- Shares the same `AzureOpenAIClient` credential pattern as `FoundryAgentConversationService`
+  (`DefaultAzureCredential`).
+- Registered as Singleton; the `ChatClient` it holds is thread-safe and long-lived.
+
+**Design rule**: never call `IAgentService` from within a user request handler in a way that
+adds latency to the user-visible response.  Invoke it either after the response is already
+delivered (e.g., title generation) or from a background task.
+
+**Current consumer**: `ConversationTitleService` — generates a ≤6-word session title from
+the first message exchange (user message + agent reply), injected into `ChatApplicationService`.
+Title generation is best-effort: non-cancellation failures are caught, logged at Warning, and
+return `null` so the session list shows no title rather than failing the request.
+Periodic title regeneration (to cover topic shifts in long-running conversations) is planned
+for Epic 3 when context-window consolidation is implemented.
+
+**Adding a new consumer**:
+1. Inject `IAgentService` into the service that needs it.
+2. Construct a focused `systemPrompt` that scopes the model to the task.
+3. Keep `userMessage` bounded in length (consider a char cap like `ConversationTitleService.MaxContextChars = 500`).
+4. Catch and log non-cancellation exceptions; return a safe default or `null`.
 
 ---
 

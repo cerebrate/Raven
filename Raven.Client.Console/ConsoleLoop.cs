@@ -77,6 +77,9 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       state.SessionId = await client.CreateSessionAsync ();
     }
 
+    // Show the session title (if known) centered between the Figlet and the
+    // "AI Assistant" separator Rule, then the session-started line.
+    renderer.ShowSessionHeader (sessionTitle);
     renderer.ShowSessionStarted (state.SessionId, isResumed, sessionTitle);
 
     // loopCts is cancelled either by the outer token (process shutdown) or by
@@ -265,6 +268,27 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           await renderer.RenderResponseStreamAsync (
               client.StreamMessageAsync (state.SessionId, input, loopCts.Token),
               loopCts.Token);
+
+          // After each successful exchange, check whether the server has generated
+          // (or updated) the session title.  This typically fires after the first
+          // exchange for new sessions.  The check is best-effort: failures are
+          // silently swallowed so they never interrupt the conversation flow.
+          if (sessionTitle is null)
+          {
+            try
+            {
+              var refreshed = await client.GetSessionAsync (state.SessionId);
+              if (!string.IsNullOrWhiteSpace (refreshed?.Title))
+              {
+                sessionTitle = refreshed.Title;
+                renderer.ShowTitleSet (sessionTitle);
+              }
+            }
+            catch
+            {
+              // best-effort — ignore any error; title will be shown next time
+            }
+          }
         }
         catch (StreamEventFailedException ex) when (string.Equals (ex.Code, "session_stale", StringComparison.Ordinal))
         {

@@ -8,8 +8,14 @@ namespace ArkaneSystems.Raven.Client.Console.Rendering;
 // without touching the real terminal.
 public interface IConsoleRenderer
 {
-  // Display the application banner on startup.
+  // Display the application banner on startup (Figlet only; the separator Rule
+  // is deferred until the session title is known — see ShowSessionHeader).
   void ShowBanner ();
+
+  // Display the session-title area: an optional centered title (if non-null/empty)
+  // followed by the horizontal "AI Assistant" separator Rule.
+  // Called once after session creation/resumption, immediately before ShowSessionStarted.
+  void ShowSessionHeader (string? title);
 
   // Confirm that a session has been established and show the session ID.
   // When resuming an existing session, showResumed is true so the display
@@ -36,6 +42,10 @@ public interface IConsoleRenderer
 
   // Display a warning message.
   void ShowWarning (string message);
+
+  // Notify the user that a session title was generated or updated.
+  // Called inline in the chat flow after the first exchange (or any title regeneration).
+  void ShowTitleSet (string title);
 
   // Prompt shown when stale-session recovery requires creating a new session.
   void ShowStaleSessionRecoveryPrompt ();
