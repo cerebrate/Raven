@@ -313,6 +313,46 @@ public sealed class ChatEndpointsTests (RavenCoreWebAppFactory factory)
     Assert.Contains(lines, static line => line.Contains("\"eventType\":\"session.deleted.v1\"", StringComparison.Ordinal));
   }
 
+  [Fact]
+  public async Task ListSessions_ReturnsCreatedSession_BeforeAndNotAfterDeletion ()
+  {
+    // A freshly-created session must appear in the list immediately.
+    var sessionId = await this.CreateSessionAsync();
+
+    var listResponse = await this._client.GetAsync("/api/chat/sessions", TestContext.Current.CancellationToken);
+    Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+
+    var listPayload = await listResponse.Content.ReadFromJsonAsync<ListSessionsResponse>(TestContext.Current.CancellationToken);
+    Assert.NotNull(listPayload);
+    Assert.Contains(listPayload.Sessions, s => s.SessionId == sessionId);
+
+    // After deletion the session must no longer appear.
+    var deleteResponse = await this._client.DeleteAsync($"/api/chat/sessions/{sessionId}", TestContext.Current.CancellationToken);
+    Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+    var listAfterResponse = await this._client.GetAsync("/api/chat/sessions", TestContext.Current.CancellationToken);
+    Assert.Equal(HttpStatusCode.OK, listAfterResponse.StatusCode);
+
+    var listAfterPayload = await listAfterResponse.Content.ReadFromJsonAsync<ListSessionsResponse>(TestContext.Current.CancellationToken);
+    Assert.NotNull(listAfterPayload);
+    Assert.DoesNotContain(listAfterPayload.Sessions, s => s.SessionId == sessionId);
+  }
+
+  [Fact]
+  public async Task ListSessions_ReturnsEmptyList_WhenNoSessionsExist ()
+  {
+    // Use a fresh factory instance so there are no sessions from other tests.
+    using var localFactory = new RavenCoreWebAppFactory();
+    var localClient = localFactory.CreateClient();
+
+    var response = await localClient.GetAsync("/api/chat/sessions", TestContext.Current.CancellationToken);
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+    var payload = await response.Content.ReadFromJsonAsync<ListSessionsResponse>(TestContext.Current.CancellationToken);
+    Assert.NotNull(payload);
+    Assert.Empty(payload.Sessions);
+  }
+
   private void ClearAgentConversations ()
   {
     var fake = this._factory.Services.GetRequiredService<IAgentConversationService>() as FakeAgentConversationService;

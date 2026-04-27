@@ -15,7 +15,8 @@ public sealed class ChatApplicationServiceTests
     var conversations = new StubAgentConversationService();
     var sessions = new InMemorySessionStore();
     var eventLog = new InMemorySessionEventLog();
-    var sut = new ChatApplicationService(conversations, sessions, eventLog, NullLogger<ChatApplicationService>.Instance);
+    var snapshotStore = new InMemorySessionSnapshotStore();
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);
@@ -36,7 +37,8 @@ public sealed class ChatApplicationServiceTests
     var conversations = new StubAgentConversationService();
     var sessions = new InMemorySessionStore();
     var eventLog = new InMemorySessionEventLog();
-    var sut = new ChatApplicationService(conversations, sessions, eventLog, NullLogger<ChatApplicationService>.Instance);
+    var snapshotStore = new InMemorySessionSnapshotStore();
+    var sut = new ChatApplicationService(conversations, sessions, eventLog, snapshotStore, NullLogger<ChatApplicationService>.Instance);
 
     const string missingConversationId = "missing-conversation";
     var sessionId = await sessions.CreateSessionAsync(missingConversationId);

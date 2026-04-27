@@ -10,15 +10,39 @@ namespace ArkaneSystems.Raven.Client.Console;
 // focused on flow control rather than presentation.
 public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRenderer renderer)
 {
-  public async Task RunAsync (CancellationToken cancellationToken = default)
+  // resumeSessionId is set when the user passes --resume <id> on the command line.
+  // When present the REPL skips creating a new session and attaches to the
+  // existing one instead.
+  public async Task RunAsync (string? resumeSessionId = null, CancellationToken cancellationToken = default)
   {
     renderer.ShowBanner ();
 
-    // Create a session with Raven.Core before entering the loop.
-    // This registers a new conversation with the agent and persists
-    // the session record to SQLite.
-    state.SessionId = await client.CreateSessionAsync ();
-    renderer.ShowSessionStarted (state.SessionId);
+    bool isResumed = false;
+
+    if (!string.IsNullOrWhiteSpace (resumeSessionId))
+    {
+      // Validate the session exists before attaching to it.
+      var info = await client.GetSessionAsync (resumeSessionId);
+      if (info is null)
+      {
+        renderer.ShowError ($"Session '{resumeSessionId}' not found. Starting a new session instead.");
+        state.SessionId = await client.CreateSessionAsync ();
+      }
+      else
+      {
+        state.SessionId = resumeSessionId;
+        isResumed = true;
+      }
+    }
+    else
+    {
+      // Create a session with Raven.Core before entering the loop.
+      // This registers a new conversation with the agent and persists
+      // the session record to SQLite.
+      state.SessionId = await client.CreateSessionAsync ();
+    }
+
+    renderer.ShowSessionStarted (state.SessionId, isResumed);
 
     // loopCts is cancelled either by the outer token (process shutdown) or by
     // the notification listener when the server announces a shutdown/restart.
@@ -83,6 +107,55 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
 
           state.SessionId = await client.CreateSessionAsync ();
           renderer.ShowNewSession (oldSessionId, state.SessionId);
+          continue;
+        }
+
+        // /sessions: list all resumable sessions on the server.
+        if (input.Equals ("/sessions", StringComparison.OrdinalIgnoreCase))
+        {
+          try
+          {
+            var sessions = await client.ListSessionsAsync ();
+            renderer.ShowSessionList (sessions);
+          }
+          catch (Exception ex)
+          {
+            renderer.ShowError (ex.Message);
+          }
+
+          continue;
+        }
+
+        // /resume <sessionId>: switch the current REPL to an existing session.
+        // The notification monitor continues on the current channel since
+        // shutdown events are broadcast to all active sessions regardless.
+        if (input.StartsWith ("/resume ", StringComparison.OrdinalIgnoreCase))
+        {
+          var targetId = input["/resume ".Length..].Trim ();
+          if (string.IsNullOrWhiteSpace (targetId))
+          {
+            renderer.ShowWarning ("Usage: /resume <session-id>");
+            continue;
+          }
+
+          try
+          {
+            var info = await client.GetSessionAsync (targetId);
+            if (info is null)
+            {
+              renderer.ShowError ($"Session '{targetId}' not found.");
+            }
+            else
+            {
+              state.SessionId = targetId;
+              renderer.ShowSessionStarted (state.SessionId, isResumed: true);
+            }
+          }
+          catch (Exception ex)
+          {
+            renderer.ShowError (ex.Message);
+          }
+
           continue;
         }
 
@@ -204,9 +277,8 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     if (serverShutdownIsRestart.HasValue && !serverShutdownHandled)
       renderer.ShowAdminCommandAccepted (serverShutdownIsRestart.Value);
 
-    renderer.ShowGoodbye ();
+    renderer.ShowGoodbye (state.SessionId);
   }
-
   // Subscribes to the server notification channel and invokes onServerShutdown
   // when a server_shutdown event is received. Connection errors are treated as
   // graceful end-of-stream so the background task never crashes the REPL.

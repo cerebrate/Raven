@@ -8,9 +8,12 @@ public sealed class ChatApplicationService (
     IAgentConversationService conversations,
     ISessionStore sessions,
     ISessionEventLog sessionEventLog,
+    ISessionSnapshotStore snapshotStore,
     ILogger<ChatApplicationService> logger) : IChatApplicationService
 {
   // Creates both sides of the session mapping so clients only work with Raven session IDs.
+  // A snapshot is written immediately after creation so the session appears in the
+  // resumable-sessions list from the moment it is created.
   public async Task<string> CreateSessionAsync (CancellationToken cancellationToken = default)
   {
     cancellationToken.ThrowIfCancellationRequested();
@@ -18,7 +21,7 @@ public sealed class ChatApplicationService (
     var conversationId = await conversations.CreateConversationAsync();
     var sessionId = await sessions.CreateSessionAsync(conversationId);
 
-    _ = await sessionEventLog.AppendAsync(
+    var envelope = await sessionEventLog.AppendAsync(
         sessionId,
         eventType: "session.created.v1",
         payload: new
@@ -26,6 +29,16 @@ public sealed class ChatApplicationService (
           ConversationId = conversationId
         },
         cancellationToken: cancellationToken);
+
+    // Write an initial snapshot so the session is immediately resumable
+    // even before any messages are sent.
+    await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
+        SessionId:        sessionId,
+        ConversationId:   conversationId,
+        CreatedAt:        DateTimeOffset.UtcNow,
+        LastActivityAt:   null,
+        SnapshotAt:       DateTimeOffset.UtcNow,
+        EventLogSequence: envelope.Sequence), cancellationToken);
 
     return sessionId;
   }
@@ -61,7 +74,7 @@ public sealed class ChatApplicationService (
     {
       var reply = await conversations.SendMessageAsync(conversationId, content);
 
-      _ = await sessionEventLog.AppendAsync(
+      var envelope = await sessionEventLog.AppendAsync(
           sessionId,
           eventType: "chat.message.sent.v1",
           payload: new
@@ -73,11 +86,25 @@ public sealed class ChatApplicationService (
           userId: context.UserId,
           cancellationToken: cancellationToken);
 
+      // Update snapshot so the latest activity is reflected and the session
+      // can be quickly resumed without replaying the full event log.
+      var sessionInfo = await sessions.GetSessionAsync (sessionId);
+      await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
+          SessionId:        sessionId,
+          ConversationId:   conversationId,
+          CreatedAt:        sessionInfo?.CreatedAt ?? DateTimeOffset.UtcNow,
+          LastActivityAt:   DateTimeOffset.UtcNow,
+          SnapshotAt:       DateTimeOffset.UtcNow,
+          EventLogSequence: envelope.Sequence), cancellationToken);
+
       return reply;
     }
     catch (ConversationNotFoundException ex)
     {
       var invalidated = await sessions.DeleteSessionAsync(sessionId);
+
+      // Remove the snapshot so the session no longer appears as resumable.
+      _ = await snapshotStore.InvalidateSnapshotAsync (sessionId, cancellationToken);
 
       _ = await sessionEventLog.AppendAsync(
           sessionId,
@@ -141,11 +168,36 @@ public sealed class ChatApplicationService (
         await onChunkAsync(chunk, cancellationToken);
       }
 
+      // Update snapshot after successful stream completion so the session
+      // is resumable from the latest state.
+      var envelope = await sessionEventLog.AppendAsync(
+          sessionId,
+          eventType: "chat.message.streamed.v1",
+          payload: new
+          {
+            RequestContent = content
+          },
+          correlationId: context.CorrelationId,
+          userId: context.UserId,
+          cancellationToken: cancellationToken);
+
+      var sessionInfo = await sessions.GetSessionAsync (sessionId);
+      await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
+          SessionId:        sessionId,
+          ConversationId:   conversationId,
+          CreatedAt:        sessionInfo?.CreatedAt ?? DateTimeOffset.UtcNow,
+          LastActivityAt:   DateTimeOffset.UtcNow,
+          SnapshotAt:       DateTimeOffset.UtcNow,
+          EventLogSequence: envelope.Sequence), cancellationToken);
+
       return true;
     }
     catch (ConversationNotFoundException ex)
     {
       var invalidated = await sessions.DeleteSessionAsync(sessionId);
+
+      // Remove the snapshot so the session no longer appears as resumable.
+      _ = await snapshotStore.InvalidateSnapshotAsync (sessionId, cancellationToken);
 
       logger.LogWarning(
           "Stale session detected during {Operation}. SessionId: {SessionId}, ConversationId: {ConversationId}, CorrelationId: {CorrelationId}, UserId: {UserId}, Invalidated: {Invalidated}",
@@ -172,7 +224,8 @@ public sealed class ChatApplicationService (
     return sessions.GetSessionAsync(sessionId);
   }
 
-  // Deletes session records through the session store.
+  // Deletes session records through the session store and removes the snapshot
+  // so the session no longer appears in the resumable-sessions list.
   public async Task<bool> DeleteSessionAsync (string sessionId, CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
@@ -188,6 +241,9 @@ public sealed class ChatApplicationService (
       return false;
     }
 
+    // Remove the snapshot so the session no longer appears as resumable.
+    _ = await snapshotStore.InvalidateSnapshotAsync (sessionId, cancellationToken);
+
     _ = await sessionEventLog.AppendAsync(
         sessionId,
         eventType: "session.deleted.v1",
@@ -198,5 +254,23 @@ public sealed class ChatApplicationService (
         cancellationToken: cancellationToken);
 
     return true;
+  }
+
+  // Returns all sessions that have a valid snapshot, ordered newest-first.
+  // A snapshot exists for any session that was successfully created and has
+  // not been explicitly deleted or invalidated by a stale-session event.
+  public async Task<IReadOnlyList<SessionSnapshot>> ListSessionsAsync (CancellationToken cancellationToken = default)
+  {
+    cancellationToken.ThrowIfCancellationRequested();
+
+    var snapshots = new List<SessionSnapshot>();
+    await foreach (var snapshot in snapshotStore.ListSnapshotsAsync (cancellationToken))
+    {
+      snapshots.Add (snapshot);
+    }
+
+    // Most-recently-snapshotted sessions first.
+    snapshots.Sort (static (a, b) => b.SnapshotAt.CompareTo (a.SnapshotAt));
+    return snapshots;
   }
 }

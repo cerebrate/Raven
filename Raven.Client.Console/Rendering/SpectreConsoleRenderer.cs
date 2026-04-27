@@ -26,9 +26,10 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.WriteLine ();
   }
 
-  public void ShowSessionStarted (string sessionId)
+  public void ShowSessionStarted (string sessionId, bool isResumed = false)
   {
-    AnsiConsole.MarkupLine ($"[grey]Session:[/] [dim]{sessionId}[/]");
+    var verb = isResumed ? "Resumed session" : "Session";
+    AnsiConsole.MarkupLine ($"[grey]{verb}:[/] [dim]{sessionId}[/]");
     AnsiConsole.MarkupLine ("[grey]Type [/][steelblue1]/exit[/][grey] to quit, [/][steelblue1]/help[/][grey] for commands, [/][yellow]/admin:shutdown[/][grey] or [/][yellow]/admin:restart[/][grey] to manage the server.[/]");
     AnsiConsole.WriteLine ();
   }
@@ -42,6 +43,8 @@ public class SpectreConsoleRenderer : IConsoleRenderer
 
     // Session commands
     table.AddRow ("[steelblue1]/new[/]", "Start a new session");
+    table.AddRow ("[steelblue1]/sessions[/]", "List resumable sessions");
+    table.AddRow ("[steelblue1]/resume <id>[/]", "Resume a session by ID");
     table.AddRow ("[steelblue1]/history[/]", "Show current session info");
     table.AddRow ("[steelblue1]/help[/]", "Show this help");
     table.AddRow ("[steelblue1]/exit[/]", "End the session and quit");
@@ -127,9 +130,14 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.MarkupLine ("[grey]Press Enter to create a new session and continue.[/]");
   }
 
-  public void ShowGoodbye ()
+  public void ShowGoodbye (string? sessionId = null)
   {
     AnsiConsole.WriteLine ();
+    if (!string.IsNullOrWhiteSpace (sessionId))
+    {
+      AnsiConsole.MarkupLine ($"[grey]Session [dim]{Markup.Escape (sessionId)}[/] is saved.[/]");
+      AnsiConsole.MarkupLine ($"[grey]Resume it next time with: [/][steelblue1]--resume {Markup.Escape (sessionId)}[/]");
+    }
     AnsiConsole.MarkupLine ("[grey]Goodbye.[/]");
   }
 
@@ -154,6 +162,40 @@ public class SpectreConsoleRenderer : IConsoleRenderer
   {
     AnsiConsole.MarkupLine ($"[grey]Previous session [dim]{Markup.Escape (oldSessionId)}[/] closed.[/]");
     AnsiConsole.MarkupLine ($"[grey]New session:[/] [dim]{Markup.Escape (newSessionId)}[/]");
+    AnsiConsole.WriteLine ();
+  }
+
+  public void ShowSessionList (IReadOnlyList<SessionSummary> sessions)
+  {
+    if (sessions.Count == 0)
+    {
+      AnsiConsole.MarkupLine ("[grey]No resumable sessions found.[/]");
+      AnsiConsole.WriteLine ();
+      return;
+    }
+
+    var table = new Table()
+            .BorderStyle(Style.Parse("grey"))
+            .AddColumn(new TableColumn("[grey]#[/]").NoWrap())
+            .AddColumn(new TableColumn("[steelblue1]Session ID[/]").NoWrap())
+            .AddColumn(new TableColumn("[grey]Started[/]").NoWrap())
+            .AddColumn(new TableColumn("[grey]Last active[/]").NoWrap());
+
+    for (int i = 0; i < sessions.Count; i++)
+    {
+      var s = sessions[i];
+      table.AddRow (
+          $"[grey]{i + 1}[/]",
+          $"[dim]{Markup.Escape (s.SessionId)}[/]",
+          $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
+          s.LastActivityAt.HasValue
+              ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
+              : "[dim]—[/]");
+    }
+
+    AnsiConsole.Write (table);
+    AnsiConsole.WriteLine ();
+    AnsiConsole.MarkupLine ("[grey]Use [/][steelblue1]/resume <id>[/][grey] to switch to a session.[/]");
     AnsiConsole.WriteLine ();
   }
 

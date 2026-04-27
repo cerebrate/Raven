@@ -39,10 +39,12 @@ public sealed class RavenCoreWebAppFactory : WebApplicationFactory<Program>
     {
       services.RemoveAll<IAgentConversationService> ();
       services.RemoveAll<ISessionStore> ();
+      services.RemoveAll<ISessionSnapshotStore> ();
       services.RemoveAll<IShutdownCoordinator> ();
 
       services.AddSingleton<IAgentConversationService, FakeAgentConversationService> ();
       services.AddSingleton<ISessionStore, InMemorySessionStore> ();
+      services.AddSingleton<ISessionSnapshotStore, InMemorySessionSnapshotStore> ();
       services.AddSingleton<FakeShutdownCoordinator> ();
       services.AddSingleton<IShutdownCoordinator> (sp => sp.GetRequiredService<FakeShutdownCoordinator> ());
     });

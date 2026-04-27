@@ -12,7 +12,9 @@ public interface IConsoleRenderer
   void ShowBanner ();
 
   // Confirm that a session has been established and show the session ID.
-  void ShowSessionStarted (string sessionId);
+  // When resuming an existing session, showResumed is true so the display
+  // message reflects "resumed" rather than "started".
+  void ShowSessionStarted (string sessionId, bool isResumed = false);
 
   // Display the list of available slash-commands.
   void ShowHelp ();
@@ -34,14 +36,18 @@ public interface IConsoleRenderer
   // Prompt shown when stale-session recovery requires creating a new session.
   void ShowStaleSessionRecoveryPrompt ();
 
-  // Display the farewell message when the user exits.
-  void ShowGoodbye ();
+  // Display the farewell message when the user exits, showing the session ID so
+  // the user can resume the same session in a future invocation.
+  void ShowGoodbye (string? sessionId = null);
 
   // Display session metadata (used by the /history command).
   void ShowSessionInfo (SessionInfoResponse info);
 
   // Confirm that the old session was closed and a new one has started.
   void ShowNewSession (string oldSessionId, string newSessionId);
+
+  // Display a list of resumable sessions for the /sessions command.
+  void ShowSessionList (IReadOnlyList<SessionSummary> sessions);
 
   // Prompt shown when the user enters /admin:shutdown or /admin:restart to obtain
   // confirmation before the command is sent to the server.
