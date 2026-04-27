@@ -31,7 +31,7 @@ public static class ChatEndpoints
     {
       var snapshots = await chat.ListSessionsAsync(cancellationToken);
       var summaries = snapshots
-          .Select (static s => new SessionSummary (s.SessionId, s.CreatedAt, s.LastActivityAt, s.SnapshotAt))
+          .Select (static s => new SessionSummary (s.SessionId, s.CreatedAt, s.LastActivityAt, s.SnapshotAt, s.Title))
           .ToList ();
       return Results.Ok (new ListSessionsResponse (summaries));
     });
@@ -144,7 +144,7 @@ public static class ChatEndpoints
       var info = await chat.GetSessionAsync(sessionId, cancellationToken);
       return info is null
         ? Results.NotFound ()
-        : Results.Ok (new SessionInfoResponse (info.SessionId, info.CreatedAt, info.LastActivityAt));
+        : Results.Ok (new SessionInfoResponse (info.SessionId, info.CreatedAt, info.LastActivityAt, info.Title));
     });
 
     // DELETE /api/chat/sessions/{sessionId}

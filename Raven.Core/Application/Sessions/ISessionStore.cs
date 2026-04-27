@@ -78,8 +78,8 @@ public sealed record SessionEventEnvelope (
 
 // Application-layer value type carrying the metadata we hold about a session.
 // Distinct from SessionInfoResponse (the HTTP contract) so the two can evolve
-// independently.
-public record SessionInfo (string SessionId, DateTimeOffset CreatedAt, DateTimeOffset? LastActivityAt);
+// independently. Title is populated after the first message exchange.
+public record SessionInfo (string SessionId, DateTimeOffset CreatedAt, DateTimeOffset? LastActivityAt, string? Title = null);
 
 // Snapshot of a session at a point in time. Used to fast-path session restore on
 // server restart without replaying the full event log. Stored as a JSON file at
@@ -88,13 +88,14 @@ public record SessionInfo (string SessionId, DateTimeOffset CreatedAt, DateTimeO
 // SchemaVersion guards forward compatibility — readers check this before
 // attempting to deserialize known fields.
 public record SessionSnapshot (
-  string         SessionId,
-  string         ConversationId,
-  DateTimeOffset CreatedAt,
+  string          SessionId,
+  string          ConversationId,
+  DateTimeOffset  CreatedAt,
   DateTimeOffset? LastActivityAt,
-  DateTimeOffset SnapshotAt,
-  long           EventLogSequence,
-  int            SchemaVersion = 1);
+  DateTimeOffset  SnapshotAt,
+  long            EventLogSequence,
+  int             SchemaVersion = 1,
+  string?         Title         = null);
 
 // Snapshot store: persists, loads, and invalidates session snapshots.
 // Snapshots are written after every successful message so the most recent

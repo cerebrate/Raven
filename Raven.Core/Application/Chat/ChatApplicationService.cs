@@ -88,14 +88,19 @@ public sealed class ChatApplicationService (
 
       // Update snapshot so the latest activity is reflected and the session
       // can be quickly resumed without replaying the full event log.
+      // Preserve any title already set on the snapshot; derive one from the first
+      // user message if the session doesn't have one yet.
       var sessionInfo = await sessions.GetSessionAsync (sessionId);
+      var existingSnapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
+      var title = existingSnapshot?.Title ?? DeriveTitle (content);
       await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
           SessionId:        sessionId,
           ConversationId:   conversationId,
           CreatedAt:        sessionInfo?.CreatedAt ?? DateTimeOffset.UtcNow,
           LastActivityAt:   DateTimeOffset.UtcNow,
           SnapshotAt:       DateTimeOffset.UtcNow,
-          EventLogSequence: envelope.Sequence), cancellationToken);
+          EventLogSequence: envelope.Sequence,
+          Title:            title), cancellationToken);
 
       return reply;
     }
@@ -182,13 +187,16 @@ public sealed class ChatApplicationService (
           cancellationToken: cancellationToken);
 
       var sessionInfo = await sessions.GetSessionAsync (sessionId);
+      var existingSnapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
+      var title = existingSnapshot?.Title ?? DeriveTitle (content);
       await snapshotStore.SaveSnapshotAsync (new SessionSnapshot (
           SessionId:        sessionId,
           ConversationId:   conversationId,
           CreatedAt:        sessionInfo?.CreatedAt ?? DateTimeOffset.UtcNow,
           LastActivityAt:   DateTimeOffset.UtcNow,
           SnapshotAt:       DateTimeOffset.UtcNow,
-          EventLogSequence: envelope.Sequence), cancellationToken);
+          EventLogSequence: envelope.Sequence,
+          Title:            title), cancellationToken);
 
       return true;
     }
@@ -213,7 +221,8 @@ public sealed class ChatApplicationService (
   }
 
   // Retrieves session metadata for session inspection APIs.
-  public Task<SessionInfo?> GetSessionAsync (string sessionId, CancellationToken cancellationToken = default)
+  // Also loads the snapshot title so callers get the full picture in one call.
+  public async Task<SessionInfo?> GetSessionAsync (string sessionId, CancellationToken cancellationToken = default)
   {
     if (string.IsNullOrWhiteSpace(sessionId))
     {
@@ -221,7 +230,15 @@ public sealed class ChatApplicationService (
     }
 
     cancellationToken.ThrowIfCancellationRequested();
-    return sessions.GetSessionAsync(sessionId);
+
+    var info = await sessions.GetSessionAsync(sessionId);
+    if (info is null)
+      return null;
+
+    // Enrich with the title from the snapshot so callers don't need
+    // to load the snapshot separately.
+    var snapshot = await snapshotStore.LoadSnapshotAsync (sessionId, cancellationToken);
+    return info with { Title = snapshot?.Title };
   }
 
   // Deletes session records through the session store and removes the snapshot
@@ -272,5 +289,37 @@ public sealed class ChatApplicationService (
     // Most-recently-snapshotted sessions first.
     snapshots.Sort (static (a, b) => b.SnapshotAt.CompareTo (a.SnapshotAt));
     return snapshots;
+  }
+
+  // Derives a human-readable title from the first user message so that the
+  // session list can show something meaningful without an extra AI call.
+  //
+  // Strategy: take the first line of the message (up to TitleMaxLength
+  // characters), strip excess whitespace, and append "…" if truncated.
+  // This is deterministic, fast, and requires no round-trip to the agent.
+  private const int TitleMaxLength = 60;
+
+  internal static string DeriveTitle (string firstUserMessage)
+  {
+    if (string.IsNullOrWhiteSpace (firstUserMessage))
+      return "New conversation";
+
+    // Use the first non-blank line as the basis for the title.
+    var firstLine = firstUserMessage
+        .Split (['\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
+        .FirstOrDefault (static l => !string.IsNullOrWhiteSpace (l))
+        ?.Trim ()
+        ?? firstUserMessage.Trim ();
+
+    if (firstLine.Length <= TitleMaxLength)
+      return firstLine;
+
+    // Truncate at a word boundary when possible so the title doesn't cut mid-word.
+    var truncated = firstLine[..TitleMaxLength];
+    var lastSpace = truncated.LastIndexOf (' ');
+    if (lastSpace > TitleMaxLength / 2)
+      truncated = truncated[..lastSpace];
+
+    return truncated + "…";
   }
 }

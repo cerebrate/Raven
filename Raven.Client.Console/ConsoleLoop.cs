@@ -13,11 +13,16 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
   // resumeSessionId is set when the user passes --resume <id> on the command line.
   // When present the REPL skips creating a new session and attaches to the
   // existing one instead.
-  public async Task RunAsync (string? resumeSessionId = null, CancellationToken cancellationToken = default)
+  //
+  // selectMode is set when the user passes --select on the command line.
+  // When true and no resumeSessionId is provided, the REPL shows a numbered
+  // session-selection menu and lets the user pick before entering the loop.
+  public async Task RunAsync (string? resumeSessionId = null, bool selectMode = false, CancellationToken cancellationToken = default)
   {
     renderer.ShowBanner ();
 
     bool isResumed = false;
+    string? sessionTitle = null;
 
     if (!string.IsNullOrWhiteSpace (resumeSessionId))
     {
@@ -31,7 +36,36 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       else
       {
         state.SessionId = resumeSessionId;
+        sessionTitle = info.Title;
         isResumed = true;
+      }
+    }
+    else if (selectMode)
+    {
+      // --select: fetch existing sessions and let the user pick one or start new.
+      var sessions = await client.ListSessionsAsync ();
+      renderer.ShowSessionSelectionMenu (sessions);
+
+      if (sessions.Count > 0)
+      {
+        var input = await ReadLineWithCancellationAsync (cancellationToken);
+        if (!cancellationToken.IsCancellationRequested && int.TryParse (input?.Trim (), out var choice) && choice >= 1 && choice <= sessions.Count)
+        {
+          var picked = sessions[choice - 1];
+          state.SessionId = picked.SessionId;
+          sessionTitle = picked.Title;
+          isResumed = true;
+        }
+        else
+        {
+          // 0, empty, or out-of-range → new session
+          state.SessionId = await client.CreateSessionAsync ();
+        }
+      }
+      else
+      {
+        // No sessions available; create a new one immediately.
+        state.SessionId = await client.CreateSessionAsync ();
       }
     }
     else
@@ -42,7 +76,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
       state.SessionId = await client.CreateSessionAsync ();
     }
 
-    renderer.ShowSessionStarted (state.SessionId, isResumed);
+    renderer.ShowSessionStarted (state.SessionId, isResumed, sessionTitle);
 
     // loopCts is cancelled either by the outer token (process shutdown) or by
     // the notification listener when the server announces a shutdown/restart.
@@ -106,6 +140,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
           }
 
           state.SessionId = await client.CreateSessionAsync ();
+          sessionTitle = null; // new session starts without a title
           renderer.ShowNewSession (oldSessionId, state.SessionId);
           continue;
         }
@@ -148,7 +183,8 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
             else
             {
               state.SessionId = targetId;
-              renderer.ShowSessionStarted (state.SessionId, isResumed: true);
+              sessionTitle = info.Title;
+              renderer.ShowSessionStarted (state.SessionId, isResumed: true, info.Title);
             }
           }
           catch (Exception ex)
@@ -277,7 +313,7 @@ public class ConsoleLoop (RavenApiClient client, SessionState state, IConsoleRen
     if (serverShutdownIsRestart.HasValue && !serverShutdownHandled)
       renderer.ShowAdminCommandAccepted (serverShutdownIsRestart.Value);
 
-    renderer.ShowGoodbye (state.SessionId);
+    renderer.ShowGoodbye (state.SessionId, sessionTitle);
   }
 
   // Subscribes to the server notification channel and invokes onServerShutdown

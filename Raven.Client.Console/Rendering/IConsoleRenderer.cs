@@ -16,6 +16,10 @@ public interface IConsoleRenderer
   // message reflects "resumed" rather than "started".
   void ShowSessionStarted (string sessionId, bool isResumed = false);
 
+  // Overload that also displays the session title for resumed sessions so
+  // the user knows which conversation they rejoined without inspecting the ID.
+  void ShowSessionStarted (string sessionId, bool isResumed, string? title);
+
   // Display the list of available slash-commands.
   void ShowHelp ();
 
@@ -40,6 +44,9 @@ public interface IConsoleRenderer
   // the user can resume the same session in a future invocation.
   void ShowGoodbye (string? sessionId = null);
 
+  // Overload that also shows the session title when available.
+  void ShowGoodbye (string? sessionId, string? title);
+
   // Display session metadata (used by the /history command).
   void ShowSessionInfo (SessionInfoResponse info);
 
@@ -48,6 +55,11 @@ public interface IConsoleRenderer
 
   // Display a list of resumable sessions for the /sessions command.
   void ShowSessionList (IReadOnlyList<SessionSummary> sessions);
+
+  // Display a numbered session-selection menu at startup (for --select mode).
+  // Prints the list and a prompt asking the user to enter a number or press
+  // Enter to start a new session.  ConsoleLoop reads the raw input.
+  void ShowSessionSelectionMenu (IReadOnlyList<SessionSummary> sessions);
 
   // Prompt shown when the user enters /admin:shutdown or /admin:restart to obtain
   // confirmation before the command is sent to the server.

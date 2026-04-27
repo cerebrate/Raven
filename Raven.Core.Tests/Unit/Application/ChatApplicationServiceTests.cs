@@ -79,3 +79,48 @@ public sealed class ChatApplicationServiceTests
     }
   }
 }
+
+public sealed class DeriveTitleTests
+{
+  [Fact]
+  public void DeriveTitle_ReturnsFirstLine_WhenShortSingleLine ()
+  {
+    var title = ChatApplicationService.DeriveTitle ("What is the capital of France?");
+    Assert.Equal ("What is the capital of France?", title);
+  }
+
+  [Fact]
+  public void DeriveTitle_TruncatesAtWordBoundary_WhenInputExceeds60Chars ()
+  {
+    var longMessage = "This is a very long message that definitely exceeds sixty characters when measured carefully";
+    var title = ChatApplicationService.DeriveTitle (longMessage);
+
+    Assert.True (title.Length <= 63, $"Title too long: '{title}' ({title.Length} chars)"); // 60 + "…"
+    Assert.EndsWith ("…", title);
+  }
+
+  [Fact]
+  public void DeriveTitle_UsesFirstNonBlankLine_WhenMultilineInput ()
+  {
+    var multiLine = "\n\nHello, Raven!\nThis is the rest of the message.";
+    var title = ChatApplicationService.DeriveTitle (multiLine);
+    Assert.Equal ("Hello, Raven!", title);
+  }
+
+  [Fact]
+  public void DeriveTitle_ReturnsDefaultTitle_WhenInputIsEmpty ()
+  {
+    Assert.Equal ("New conversation", ChatApplicationService.DeriveTitle (""));
+    Assert.Equal ("New conversation", ChatApplicationService.DeriveTitle ("   "));
+    Assert.Equal ("New conversation", ChatApplicationService.DeriveTitle ("\n\n"));
+  }
+
+  [Theory]
+  [InlineData ("Hello")]
+  [InlineData ("What is AI?")]
+  public void DeriveTitle_NeverReturnsEmptyString (string input)
+  {
+    var title = ChatApplicationService.DeriveTitle (input);
+    Assert.False (string.IsNullOrWhiteSpace (title));
+  }
+}

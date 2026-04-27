@@ -7,4 +7,5 @@ public record SessionSummary (
     string          SessionId,
     DateTimeOffset  CreatedAt,
     DateTimeOffset? LastActivityAt,
-    DateTimeOffset  SnapshotAt);
+    DateTimeOffset  SnapshotAt,
+    string?         Title = null);

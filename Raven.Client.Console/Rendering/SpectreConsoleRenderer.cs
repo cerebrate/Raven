@@ -34,6 +34,19 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.WriteLine ();
   }
 
+  // Overload that also shows the session title when resuming so the user
+  // knows which conversation they rejoined without looking at the session ID.
+  public void ShowSessionStarted (string sessionId, bool isResumed, string? title)
+  {
+    var verb = isResumed ? "Resumed session" : "Session";
+    if (isResumed && !string.IsNullOrWhiteSpace (title))
+      AnsiConsole.MarkupLine ($"[grey]{verb}:[/] [steelblue1]{Markup.Escape (title)}[/] [dim]({sessionId})[/]");
+    else
+      AnsiConsole.MarkupLine ($"[grey]{verb}:[/] [dim]{sessionId}[/]");
+    AnsiConsole.MarkupLine ("[grey]Type [/][steelblue1]/exit[/][grey] to quit, [/][steelblue1]/help[/][grey] for commands, [/][yellow]/admin:shutdown[/][grey] or [/][yellow]/admin:restart[/][grey] to manage the server.[/]");
+    AnsiConsole.WriteLine ();
+  }
+
   public void ShowHelp ()
   {
     var table = new Table()
@@ -141,6 +154,21 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.MarkupLine ("[grey]Goodbye.[/]");
   }
 
+  // Overload that shows the title as well when the session has one.
+  public void ShowGoodbye (string? sessionId, string? title)
+  {
+    AnsiConsole.WriteLine ();
+    if (!string.IsNullOrWhiteSpace (sessionId))
+    {
+      if (!string.IsNullOrWhiteSpace (title))
+        AnsiConsole.MarkupLine ($"[grey]Session [steelblue1]{Markup.Escape (title)}[/] [dim]({sessionId})[/] is saved.[/]");
+      else
+        AnsiConsole.MarkupLine ($"[grey]Session [dim]{Markup.Escape (sessionId)}[/] is saved.[/]");
+      AnsiConsole.MarkupLine ($"[grey]Resume it next time with: [/][steelblue1]--resume {Markup.Escape (sessionId)}[/]");
+    }
+    AnsiConsole.MarkupLine ("[grey]Goodbye.[/]");
+  }
+
   public void ShowSessionInfo (SessionInfoResponse info)
   {
     var table = new Table()
@@ -149,6 +177,8 @@ public class SpectreConsoleRenderer : IConsoleRenderer
             .AddColumn(new TableColumn("[grey]Value[/]"));
 
     table.AddRow ("Session ID", $"[dim]{Markup.Escape (info.SessionId)}[/]");
+    if (!string.IsNullOrWhiteSpace (info.Title))
+      table.AddRow ("Title", $"[steelblue1]{Markup.Escape (info.Title)}[/]");
     table.AddRow ("Started", $"[dim]{info.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm:ss}[/]");
     table.AddRow ("Last activity", info.LastActivityAt.HasValue
         ? $"[dim]{info.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm:ss}[/]"
@@ -178,6 +208,7 @@ public class SpectreConsoleRenderer : IConsoleRenderer
             .BorderStyle(Style.Parse("grey"))
             .AddColumn(new TableColumn("[grey]#[/]").NoWrap())
             .AddColumn(new TableColumn("[steelblue1]Session ID[/]").NoWrap())
+            .AddColumn(new TableColumn("[grey]Title[/]"))
             .AddColumn(new TableColumn("[grey]Started[/]").NoWrap())
             .AddColumn(new TableColumn("[grey]Last active[/]").NoWrap());
 
@@ -187,6 +218,7 @@ public class SpectreConsoleRenderer : IConsoleRenderer
       table.AddRow (
           $"[grey]{i + 1}[/]",
           $"[dim]{Markup.Escape (s.SessionId)}[/]",
+          !string.IsNullOrWhiteSpace (s.Title) ? Markup.Escape (s.Title) : "[dim]—[/]",
           $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
           s.LastActivityAt.HasValue
               ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
@@ -197,6 +229,44 @@ public class SpectreConsoleRenderer : IConsoleRenderer
     AnsiConsole.WriteLine ();
     AnsiConsole.MarkupLine ("[grey]Use [/][steelblue1]/resume <id>[/][grey] to switch to a session.[/]");
     AnsiConsole.WriteLine ();
+  }
+
+  public void ShowSessionSelectionMenu (IReadOnlyList<SessionSummary> sessions)
+  {
+    if (sessions.Count == 0)
+    {
+      AnsiConsole.MarkupLine ("[grey]No resumable sessions found. Starting a new session.[/]");
+      AnsiConsole.WriteLine ();
+      return;
+    }
+
+    var table = new Table()
+            .BorderStyle(Style.Parse("grey"))
+            .AddColumn(new TableColumn("[grey]#[/]").NoWrap())
+            .AddColumn(new TableColumn("[steelblue1]Session ID[/]").NoWrap())
+            .AddColumn(new TableColumn("[grey]Title[/]"))
+            .AddColumn(new TableColumn("[grey]Started[/]").NoWrap())
+            .AddColumn(new TableColumn("[grey]Last active[/]").NoWrap());
+
+    // Entry 0 = new session; existing sessions start at 1.
+    table.AddRow ("[grey]0[/]", "[steelblue1]< new session >[/]", "", "", "");
+
+    for (int i = 0; i < sessions.Count; i++)
+    {
+      var s = sessions[i];
+      table.AddRow (
+          $"[grey]{i + 1}[/]",
+          $"[dim]{Markup.Escape (s.SessionId)}[/]",
+          !string.IsNullOrWhiteSpace (s.Title) ? Markup.Escape (s.Title) : "[dim]—[/]",
+          $"[dim]{s.CreatedAt.ToLocalTime ():yyyy-MM-dd HH:mm}[/]",
+          s.LastActivityAt.HasValue
+              ? $"[dim]{s.LastActivityAt.Value.ToLocalTime ():yyyy-MM-dd HH:mm}[/]"
+              : "[dim]—[/]");
+    }
+
+    AnsiConsole.Write (table);
+    AnsiConsole.WriteLine ();
+    AnsiConsole.Markup ("[grey]Enter session number (or [/][steelblue1]0[/][grey] / Enter for new): [/]");
   }
 
   public void ShowAdminCommandConfirmationPrompt (bool isRestart)
