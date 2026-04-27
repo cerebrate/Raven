@@ -266,6 +266,8 @@ prefix. This makes the blast radius obvious in the help table and in shell trans
 - Arrange-Act-Assert (AAA) structure
 - Parameterized tests for edge cases (null, empty string, boundary values)
 - No mocking of code you own; only mock external dependencies (Azure/Foundry, HTTP)
+- For integration tests that share a collection fixture and singleton fakes (for example `FakeShutdownCoordinator`), enforce clean preconditions with a per-test reset scope (`ShutdownStateScope`) that resets state on construction and disposal.
+- Do not let stateful singleton test doubles leak across tests; each test must explicitly establish and restore baseline state even when assertions fail.
 
 ## Configuration & Environment
 
